@@ -1,0 +1,3971 @@
+============================================================
+THE OREGANO CAFE
+PREMIUM QR TABLE ORDERING + ADMIN MANAGEMENT SYSTEM
+============================================================
+
+PROJECT:
+The Oregano Cafe — Premium Digital Menu, QR Table Ordering,
+Live Admin Order Management, Earnings, Expenses, Profit/Loss
+and Financial Reporting System.
+
+CAFE NAME:
+THE OREGANO CAFE
+
+ESTABLISHED:
+2019
+
+
+============================================================
+1. PROJECT OVERVIEW
+============================================================
+
+Build a complete production-ready premium restaurant website
+for THE OREGANO CAFE.
+
+This is NOT simply a digital PDF menu.
+
+The website must work as:
+
+PREMIUM DIGITAL MENU
++
+QR TABLE ORDERING SYSTEM
++
+LIVE ADMIN ORDER MANAGEMENT
++
+DAILY EARNINGS TRACKER
++
+EXPENSE MANAGEMENT
++
+PROFIT / LOSS CALCULATOR
++
+FINANCIAL REPORT GENERATOR
+
+The system has TWO completely different experiences:
+
+1. CUSTOMER WEBSITE
+2. ADMIN DASHBOARD
+
+
+============================================================
+2. CUSTOMER ORDERING FLOW
+============================================================
+
+Every cafe table will have a QR code.
+
+Customer flow:
+
+SCAN QR CODE
+       ↓
+OPEN WEBSITE
+       ↓
+ENTER / DETECT TABLE NUMBER
+       ↓
+BROWSE MENU
+       ↓
+SELECT FOOD ITEMS
+       ↓
+SELECT OPTIONS / ADD-ONS
+       ↓
+ADD TO CART
+       ↓
+VIEW CART
+       ↓
+CONFIRM ORDER
+       ↓
+PLACE ORDER
+       ↓
+ORDER SAVED TO DATABASE
+       ↓
+ADMIN RECEIVES ORDER
+       ↓
+CUSTOMER SEES ORDER RECEIVED
+
+
+IMPORTANT:
+
+There must be NO WhatsApp ordering.
+
+The order must NOT be sent to WhatsApp.
+
+The website must NOT open WhatsApp.
+
+The website must NOT generate WhatsApp messages.
+
+The cafe WhatsApp number is NOT required for ordering.
+
+
+============================================================
+3. CUSTOMER ACCOUNT
+============================================================
+
+Customers must NOT need an account.
+
+Do NOT create:
+
+- Customer Login
+- Customer Signup
+- Customer Password
+- Customer OTP
+- Customer Profile
+- Customer Email
+- Customer Phone Registration
+
+Customer should only need:
+
+TABLE NUMBER
++
+MENU
++
+CART
++
+PLACE ORDER
+
+The ordering process must be extremely fast and simple.
+
+
+============================================================
+4. ADMIN ACCOUNT
+============================================================
+
+Create a separate secure ADMIN LOGIN.
+
+Customer-facing users must never access admin features.
+
+Admin URL:
+
+/admin
+
+Admin login page:
+
+--------------------------------
+
+THE OREGANO CAFE
+
+ADMIN PORTAL
+
+Email / Username
+
+[________________________]
+
+Password
+
+[________________________]
+
+[ LOGIN ]
+
+--------------------------------
+
+Optional:
+
+[ SHOW PASSWORD ]
+
+After successful login:
+
+→ Open Admin Dashboard
+
+Admin must have:
+
+[ LOGOUT ]
+
+button.
+
+
+============================================================
+5. ADMIN SECURITY
+============================================================
+
+Admin authentication must be secure.
+
+IMPORTANT:
+
+Never expose the admin password in frontend JavaScript.
+
+Never hardcode admin credentials inside public website code.
+
+Use secure authentication supported by the backend/platform.
+
+All admin routes must be protected.
+
+If a user is not authenticated and tries to open:
+
+/admin
+
+redirect them to:
+
+/admin/login
+
+
+============================================================
+6. CUSTOMER WEBSITE URL
+============================================================
+
+Customer website:
+
+/
+
+Optional QR table URLs:
+
+/?table=1
+/?table=2
+/?table=3
+/?table=4
+/?table=5
+
+etc.
+
+If the URL contains a valid table number:
+
+?table=12
+
+automatically detect:
+
+TABLE 12
+
+and skip manual table-number entry.
+
+Manual table entry must still exist as a fallback.
+
+
+============================================================
+7. TABLE NUMBER SYSTEM
+============================================================
+
+When a customer opens the website manually:
+
+WELCOME TO
+
+THE OREGANO CAFE
+
+Please enter your table number.
+
+[ TABLE NUMBER ]
+
+[ CONTINUE TO MENU ]
+
+After entering:
+
+12
+
+show:
+
+TABLE 12
+
+The table number must remain attached to the customer's
+session/order.
+
+The customer should not have to enter the table number again
+during the same ordering session.
+
+Provide an optional:
+
+[ CHANGE TABLE ]
+
+button.
+
+
+============================================================
+8. PREMIUM CUSTOMER UI
+============================================================
+
+The website must look:
+
+ULTRA PREMIUM
+ULTRA MODERN
+RICH
+ELEGANT
+LUXURIOUS
+PROFESSIONAL
+MINIMAL
+FAST
+MOBILE-FIRST
+
+The website should look like a real premium cafe website
+created by a professional design agency.
+
+It must NOT look like:
+
+- Basic HTML
+- Cheap template
+- College project
+- Generic food delivery app
+- PDF converted directly to HTML
+- AI-generated-looking template
+- Overly colorful website
+
+
+============================================================
+9. BRAND VISUAL IDENTITY
+============================================================
+
+Use the supplied:
+
+The Oregano Cafe Menu 2026.pdf
+
+as the visual and content reference.
+
+The supplied menu uses a warm cream/beige background,
+dark olive/green typography and botanical leaf elements.
+
+Modernize this identity for the web while maintaining
+the cafe's original character.
+
+Preferred palette:
+
+- Warm cream
+- Ivory
+- Beige
+- Dark olive green
+- Sage green
+- Muted gold
+- Soft earthy brown
+
+Avoid:
+
+- Neon colors
+- Random blue/purple UI
+- Excessive gradients
+- Excessive black
+- Cheap-looking shadows
+- Overly saturated colors
+
+
+============================================================
+10. TYPOGRAPHY
+============================================================
+
+Use premium typography.
+
+Brand:
+
+Elegant serif / luxury display font.
+
+Body:
+
+Clean modern sans-serif.
+
+Menu headings:
+
+Elegant premium display typography.
+
+Prices:
+
+Bold, highly readable.
+
+Maintain excellent typography hierarchy.
+
+Cafe branding should visually emphasize:
+
+THE
+OREGANO
+CAFE
+
+EST. 2019
+
+
+============================================================
+11. HERO SECTION
+============================================================
+
+Opening screen:
+
+THE
+OREGANO
+CAFE
+
+EST. 2019
+
+Premium tagline such as:
+
+GOOD FOOD.
+GOOD MOOD.
+GOOD TIMES.
+
+Use:
+
+- Elegant typography
+- Subtle botanical decoration
+- Premium food imagery
+- Soft entrance animation
+- Warm cream background
+
+Do not make the hero unnecessarily large.
+
+QR customers should reach the menu quickly.
+
+
+============================================================
+12. CUSTOMER HEADER
+============================================================
+
+Sticky header.
+
+Mobile example:
+
+THE OREGANO CAFE
+
+TABLE 12
+
+[ SEARCH ]     [ CART ]
+
+Keep the active table number visible.
+
+Example:
+
+TABLE 12
+
+
+============================================================
+13. MENU NAVIGATION
+============================================================
+
+Create a premium horizontally scrollable category navigation.
+
+Categories:
+
+APPETIZERS
+GARLIC BREADS
+FRIES
+NACHOS
+BURGERS
+MOMOS
+BAO
+FONDUE
+PIZZA
+PASTA
+CONTINENTAL RICE
+DIPS
+DESI JUNCTION
+PREMIUM BIRYANI
+PAV BHAJI
+SIDES
+ORIENTAL EXPRESS
+SOUPS
+CHINESE STARTERS
+CHINESE RICE
+CHINESE NOODLES
+CHINESE GRAVY
+THAI CURRY
+MILKSHAKES
+MOCKTAILS
+COLD COFFEE
+ICED LATTE
+ICED TEA
+HOT COFFEE
+HOT CHOCOLATE
+WAFFLES
+DESSERTS
+CHEESECAKE
+BOBAVERSE
+BOBA ICED TEA
+BEVERAGES
+JAIN MENU
+
+
+============================================================
+14. MENU SEARCH
+============================================================
+
+Provide:
+
+[ 🔍 Search menu... ]
+
+Search must work instantly.
+
+Examples:
+
+pizza
+paneer
+momos
+coffee
+burger
+biryani
+shake
+jain
+
+Show:
+
+NO DISHES FOUND
+
+if there are no results.
+
+
+============================================================
+15. MENU FILTERS
+============================================================
+
+Provide elegant filters:
+
+ALL
+VEG
+JAIN
+
+Keep filters simple and professional.
+
+
+============================================================
+16. MENU ITEM CARD
+============================================================
+
+Each menu item should display:
+
+FOOD IMAGE
+
+ITEM NAME
+
+DESCRIPTION
+
+PRICE
+
+[ ADD ]
+
+After adding:
+
+[ - ] 1 [ + ]
+
+Example:
+
+MARGHERITA PIZZA
+
+Classic Pizza, Tomato sauce & Mozzarella
+garnished with basil leaves.
+
+₹290
+
+[ ADD ]
+
+Cards must be compact enough that customers can browse
+many items easily.
+
+On mobile use a layout optimized for easy scrolling and
+touch interaction.
+
+
+============================================================
+17. FOOD IMAGES
+============================================================
+
+Use high-quality premium food imagery.
+
+Images must actually match the food.
+
+Examples:
+
+Pizza → Pizza image
+Momos → Momos image
+Milkshake → Milkshake image
+Waffle → Waffle image
+Coffee → Coffee image
+Biryani → Biryani image
+
+Never use unrelated random images.
+
+If an exact image is unavailable, use a tasteful matching
+food image or premium placeholder.
+
+Never show broken image icons.
+
+
+============================================================
+18. ITEM OPTIONS
+============================================================
+
+Where the original menu provides options, the website must
+allow the customer to select them before adding the item.
+
+Examples:
+
+MOMOS:
+
+Classic Veg Momos
+₹170
+
+Choose:
+
+○ Steamed
+○ Fried
+
+
+Veg Chilli Momos
+₹180
+
+Choose:
+
+○ Steamed
+○ Fried
+
+
+Corn Cheese Momos
+₹210
+
+Fried
+
+
+============================================================
+19. PIZZA ADD-ONS
+============================================================
+
+Pizza:
+
+Medium Size 8"
+
+Available pizza items and prices must exactly match
+the supplied menu.
+
+Extra Cheese:
+
+₹80
+
+Extra Topping:
+
+₹30 each
+
+Available toppings:
+
+Corn
+Jalapeno
+Black Olive
+Zucchini
+Mushroom
+Red/Yellow Bell Pepper
+Broccoli
+Capsicum
+Paneer
+Onions
+
+When selecting toppings, calculate the add-on amount
+automatically.
+
+
+============================================================
+20. HALF / FULL OPTIONS
+============================================================
+
+Where the menu has Half / Full pricing:
+
+show:
+
+HALF
+FULL
+
+and calculate the selected price correctly.
+
+Example:
+
+Veg Fried Rice
+
+Half ₹120
+Full ₹210
+
+Customer selects:
+
+○ Half
+○ Full
+
+Only selected variant is added to cart.
+
+
+============================================================
+21. CART
+============================================================
+
+Create a premium cart system.
+
+On mobile use a sticky/floating cart button.
+
+Example:
+
+🛒 VIEW ORDER
+
+3 ITEMS • ₹840
+
+When clicked, open a premium cart drawer/modal.
+
+Example:
+
+YOUR ORDER
+
+TABLE 12
+
+--------------------------------
+
+Margherita Pizza
+Qty: 2
+₹580
+
+[ - ] 2 [ + ]
+
+--------------------------------
+
+Oreo Milkshake
+Qty: 1
+₹180
+
+[ - ] 1 [ + ]
+
+--------------------------------
+
+Cheese Dip
+Qty: 2
+₹60
+
+[ - ] 2 [ + ]
+
+--------------------------------
+
+TOTAL
+₹820
+
+[ PROCEED TO ORDER ]
+
+
+============================================================
+22. PRICE CALCULATION
+============================================================
+
+Item total:
+
+ITEM PRICE × QUANTITY
+
+Grand Total:
+
+SUM OF ALL ITEM TOTALS
+
+Example:
+
+₹290 × 2 = ₹580
+₹180 × 1 = ₹180
+₹30 × 2 = ₹60
+
+TOTAL = ₹820
+
+Do not add hidden charges.
+
+Do not invent taxes or fees.
+
+The supplied menu states that the cafe does not add
+extra taxes or hidden charges to the bill.
+
+
+============================================================
+23. ORDER CONFIRMATION
+============================================================
+
+Before creating the order, show:
+
+CONFIRM YOUR ORDER
+
+TABLE 12
+
+--------------------------------
+
+2 × Margherita Pizza
+₹580
+
+1 × Oreo Milkshake
+₹180
+
+2 × Cheese Dip
+₹60
+
+--------------------------------
+
+TOTAL
+
+₹820
+
+[ PLACE ORDER ]
+
+
+============================================================
+24. PLACE ORDER
+============================================================
+
+When customer clicks:
+
+PLACE ORDER
+
+the website must create a permanent order in the database.
+
+Generate a unique Order ID.
+
+Example:
+
+ORD-20260903-0012
+
+Store:
+
+Order ID
+Table Number
+Items
+Quantities
+Prices
+Variants
+Add-ons
+Total
+Order Status
+Order Date
+Order Time
+Created Timestamp
+
+
+Default status:
+
+PENDING
+
+
+============================================================
+25. CUSTOMER ORDER RECEIVED SCREEN
+============================================================
+
+After successfully saving the order:
+
+--------------------------------
+
+✓ ORDER RECEIVED
+
+Your order has been received by
+The Oregano Cafe team.
+
+TABLE 12
+
+ORDER ID:
+
+ORD-20260903-0012
+
+TOTAL:
+
+₹820
+
+Our team will prepare your order shortly.
+
+[ BACK TO MENU ]
+
+--------------------------------
+
+IMPORTANT:
+
+Do NOT show:
+
+"ORDER COMPLETED"
+
+because the cafe has only received the order.
+
+Only show Order Received after successful database save.
+
+
+============================================================
+26. WHATSAPP — COMPLETELY REMOVED
+============================================================
+
+VERY IMPORTANT:
+
+WHATSAPP MUST NOT BE USED ANYWHERE IN THE ORDERING SYSTEM.
+
+DO NOT:
+
+- Open WhatsApp
+- Redirect to WhatsApp
+- Generate WhatsApp messages
+- Create WhatsApp buttons
+- Use WhatsApp API
+- Send orders to WhatsApp
+- Show WhatsApp checkout
+- Ask customers to contact WhatsApp
+
+ALL ORDERS MUST STAY INSIDE THE WEBSITE DATABASE.
+
+
+============================================================
+27. DATABASE
+============================================================
+
+Because orders are no longer sent to WhatsApp,
+persistent backend/database storage is REQUIRED.
+
+Do NOT use localStorage as the main order database.
+
+Required database functionality:
+
+- Admin authentication
+- Orders
+- Order items
+- Menu items
+- Table numbers
+- Order status
+- Order timestamps
+- Completed timestamps
+- Cancellation timestamps
+- Expenses
+- Expense dates
+- Financial calculations
+- Reports
+
+Customer cart may use temporary client-side/session storage,
+but placed orders MUST be stored permanently in the database.
+
+
+============================================================
+28. ORDER DATABASE STRUCTURE
+============================================================
+
+Suggested entities:
+
+ADMINS / USERS
+
+MENU_ITEMS
+
+ORDERS
+
+ORDER_ITEMS
+
+EXPENSES
+
+TABLES
+
+Exact architecture can be chosen according to the backend
+available in the development platform.
+
+
+============================================================
+29. ORDER RECORD
+============================================================
+
+Example:
+
+ORDER ID:
+ORD-20260903-0012
+
+TABLE:
+12
+
+STATUS:
+PENDING
+
+CREATED:
+03 September 2026
+10:42 PM
+
+ITEMS:
+
+Margherita Pizza
+Quantity: 2
+Price: ₹290
+Total: ₹580
+
+Oreo Milkshake
+Quantity: 1
+Price: ₹180
+Total: ₹180
+
+GRAND TOTAL:
+₹760
+
+
+============================================================
+30. ADMIN DASHBOARD
+============================================================
+
+After admin login:
+
+THE OREGANO CAFE
+ADMIN DASHBOARD
+
+Premium SaaS-style dashboard.
+
+Navigation:
+
+DASHBOARD
+PENDING ORDERS
+COMPLETED ORDERS
+CANCELLED ORDERS
+ORDER HISTORY
+DAILY EARNINGS
+EXPENSES
+FINANCIAL REPORTS
+TABLES
+SETTINGS
+LOGOUT
+
+
+============================================================
+31. DASHBOARD SUMMARY CARDS
+============================================================
+
+Show:
+
+TODAY'S ORDERS
+
+PENDING ORDERS
+
+COMPLETED ORDERS
+
+CANCELLED ORDERS
+
+TODAY'S EARNINGS
+
+TODAY'S EXPENSES
+
+TODAY'S PROFIT / LOSS
+
+All values must come from actual database records.
+
+No fake/hardcoded numbers.
+
+
+============================================================
+32. PENDING / RECEIVED ORDERS
+============================================================
+
+Create a dedicated:
+
+PENDING ORDERS
+
+section.
+
+Every new customer order automatically appears here.
+
+Example:
+
+------------------------------------------------
+
+ORDER #ORD-20260903-0012
+
+TABLE 12
+
+10:42 PM
+
+2 × Margherita Pizza
+1 × Oreo Milkshake
+2 × Cheese Dip
+
+TOTAL
+
+₹760
+
+[ VIEW ORDER ]
+
+[ ✓ COMPLETE ]    [ ✕ CANCEL ]
+
+------------------------------------------------
+
+Newest orders should appear prominently.
+
+
+============================================================
+33. LIVE ORDER UPDATES
+============================================================
+
+When a customer places an order:
+
+CUSTOMER
+↓
+DATABASE
+↓
+ADMIN DASHBOARD
+
+The new order should appear automatically.
+
+If realtime database functionality is available,
+use realtime updates.
+
+Admin should NOT have to refresh the page manually.
+
+Show subtle notification:
+
+NEW ORDER RECEIVED
+
+Table 12
+
+Order #ORD-20260903-0012
+
+₹760
+
+Use notification sound only if appropriate and permitted
+by browser settings.
+
+Do not make notifications annoying.
+
+
+============================================================
+34. VIEW ORDER
+============================================================
+
+When admin clicks:
+
+VIEW ORDER
+
+open detailed order panel.
+
+Example:
+
+ORDER #ORD-20260903-0012
+
+TABLE 12
+
+ORDERED AT:
+10:42 PM
+
+STATUS:
+PENDING
+
+--------------------------------
+
+Margherita Pizza
+Qty: 2
+₹580
+
+Oreo Milkshake
+Qty: 1
+₹180
+
+--------------------------------
+
+TOTAL:
+₹760
+
+--------------------------------
+
+[ ✓ COMPLETE ]
+[ ✕ CANCEL ]
+
+
+============================================================
+35. COMPLETE ORDER
+============================================================
+
+Every pending order must have:
+
+✓ COMPLETE
+
+button.
+
+When clicked:
+
+show confirmation:
+
+--------------------------------
+
+MARK THIS ORDER AS COMPLETED?
+
+Are you sure this order has reached
+the customer/table?
+
+[ GO BACK ]
+
+[ YES, COMPLETE ORDER ]
+
+--------------------------------
+
+After confirmation:
+
+PENDING
+   ↓
+COMPLETED
+
+
+============================================================
+36. COMPLETED ORDER LOGIC
+============================================================
+
+When an order is completed:
+
+1. Status becomes COMPLETED.
+2. Completed date/time is stored.
+3. Order moves out of Pending Orders.
+4. Order appears in Completed Orders.
+5. Order amount becomes part of earnings.
+6. Today's earnings update immediately.
+7. Financial reports update automatically.
+
+
+============================================================
+37. COMPLETED ORDERS
+============================================================
+
+Create:
+
+COMPLETED ORDERS
+
+Example:
+
+COMPLETED ORDERS — TODAY
+
+--------------------------------
+
+✓ ORD-20260903-0010
+
+TABLE 4
+
+₹520
+
+10:10 PM
+
+--------------------------------
+
+✓ ORD-20260903-0011
+
+TABLE 8
+
+₹890
+
+10:25 PM
+
+--------------------------------
+
+✓ ORD-20260903-0012
+
+TABLE 12
+
+₹760
+
+10:42 PM
+
+--------------------------------
+
+Click any order to view complete details.
+
+
+============================================================
+38. CANCEL ORDER
+============================================================
+
+Every PENDING / RECEIVED order must also have:
+
+✕ CANCEL
+
+button.
+
+This is extremely important.
+
+If an order is cancelled by the cafe/admin,
+do NOT delete the order from the database.
+
+
+============================================================
+39. CANCEL CONFIRMATION
+============================================================
+
+When admin clicks:
+
+✕ CANCEL
+
+show:
+
+--------------------------------
+
+CANCEL THIS ORDER?
+
+Are you sure you want to cancel:
+
+Order #ORD-20260903-0012
+
+Table 12
+
+Total ₹760
+
+[ GO BACK ]
+
+[ YES, CANCEL ORDER ]
+
+--------------------------------
+
+Do NOT cancel instantly without confirmation.
+
+
+============================================================
+40. CANCELLED ORDER LOGIC
+============================================================
+
+After confirmation:
+
+PENDING
+   ↓
+CANCELLED
+
+The order must:
+
+1. Change status to CANCELLED.
+2. Store cancellation date/time.
+3. Move out of Pending Orders.
+4. Appear in Cancelled Orders.
+5. Remain permanently stored in database.
+6. NOT count as earnings.
+7. NOT increase revenue.
+8. NOT increase profit.
+9. Remain available in order history.
+
+
+============================================================
+41. CANCELLED ORDERS
+============================================================
+
+Create a dedicated:
+
+CANCELLED ORDERS
+
+section.
+
+Example:
+
+------------------------------------------------
+
+✕ ORD-20260903-0015
+
+TABLE 7
+
+ORDERED ITEMS:
+
+2 × Margherita Pizza
+1 × Oreo Milkshake
+
+TOTAL:
+
+₹760
+
+CANCELLED AT:
+
+10:52 PM
+
+STATUS:
+
+CANCELLED
+
+------------------------------------------------
+
+
+============================================================
+42. CANCELLED ORDER DETAILS
+============================================================
+
+When admin opens a cancelled order:
+
+ORDER #ORD-20260903-0015
+
+TABLE 7
+
+ORDERED AT:
+10:40 PM
+
+CANCELLED AT:
+10:52 PM
+
+STATUS:
+CANCELLED
+
+ITEMS:
+
+2 × Margherita Pizza
+1 × Oreo Milkshake
+
+TOTAL:
+₹760
+
+
+============================================================
+43. IMPORTANT EARNINGS RULE
+============================================================
+
+ONLY COMPLETED ORDERS COUNT AS EARNINGS.
+
+Pending orders:
+DO NOT COUNT
+
+Cancelled orders:
+DO NOT COUNT
+
+Completed orders:
+COUNT
+
+Example:
+
+Pending:
+₹2,000
+
+Completed:
+₹8,000
+
+Cancelled:
+₹1,500
+
+TOTAL EARNINGS:
+
+₹8,000
+
+NOT:
+
+₹11,500
+
+
+============================================================
+44. ORDER STATUS FLOW
+============================================================
+
+NEW ORDER
+   ↓
+PENDING
+   ├──────────────→ ✓ COMPLETED
+   │                    ↓
+   │              COMPLETED ORDERS
+   │                    ↓
+   │              COUNTS AS EARNINGS
+   │
+   └──────────────→ ✕ CANCELLED
+                        ↓
+                  CANCELLED ORDERS
+                        ↓
+                  DOES NOT COUNT
+
+
+============================================================
+45. DAILY EARNINGS
+============================================================
+
+Admin navigation:
+
+DAILY EARNINGS
+
+This section shows financial data for a selected day.
+
+Example:
+
+03 SEPTEMBER 2026
+
+--------------------------------
+
+COMPLETED ORDERS
+28
+
+TOTAL EARNINGS
+₹8,450
+
+TOTAL EXPENSES
+₹2,350
+
+NET PROFIT
++₹6,100
+
+--------------------------------
+
+
+============================================================
+46. ADD EXPENSE
+============================================================
+
+Inside Daily Earnings / Expenses:
+
+[ + ADD EXPENSE ]
+
+When clicked:
+
+ADD EXPENSE
+
+Expense Name:
+
+[________________________]
+
+Amount:
+
+₹ [______________________]
+
+Optional Note:
+
+[________________________]
+
+Expense Date:
+
+[________________________]
+
+[ SAVE EXPENSE ]
+
+
+============================================================
+47. MULTIPLE EXPENSES
+============================================================
+
+Admin can add unlimited expenses for one day.
+
+Example:
+
+03 SEPTEMBER 2026
+
+EXPENSES:
+
+Milk / Dairy
+₹850
+
+Vegetables
+₹500
+
+Staff Refreshments
+₹250
+
+Cleaning Supplies
+₹300
+
+Electricity
+₹450
+
+--------------------------------
+
+TOTAL EXPENSES:
+
+₹2,350
+
+
+============================================================
+48. EXPENSE MANAGEMENT
+============================================================
+
+Each expense should be stored individually.
+
+Admin can:
+
+ADD
+EDIT
+DELETE
+
+expenses.
+
+Before deleting:
+
+"Delete this expense?"
+
+[ CANCEL ]
+
+[ DELETE ]
+
+Never silently delete financial information.
+
+
+============================================================
+49. EXPENSE TABLE
+============================================================
+
+Show:
+
+EXPENSE
+AMOUNT
+DATE
+NOTE
+ADDED TIME
+ACTIONS
+
+Example:
+
+Milk / Dairy
+₹850
+03/09/2026
+Morning purchase
+09:10 AM
+
+[ EDIT ] [ DELETE ]
+
+
+============================================================
+50. PROFIT / LOSS CALCULATION
+============================================================
+
+Formula:
+
+TOTAL EARNINGS =
+SUM OF COMPLETED ORDER TOTALS
+
+TOTAL EXPENSES =
+SUM OF EXPENSES
+
+NET PROFIT =
+TOTAL EARNINGS - TOTAL EXPENSES
+
+
+Example:
+
+Earnings:
+₹10,000
+
+Expenses:
+₹3,500
+
+Profit:
++₹6,500
+
+
+If:
+
+Earnings:
+₹5,000
+
+Expenses:
+₹6,500
+
+Net:
+
+-₹1,500
+
+Display:
+
+NET LOSS
+
+-₹1,500
+
+
+============================================================
+51. FINANCIAL DASHBOARD
+============================================================
+
+Create:
+
+FINANCIAL REPORTS
+
+Admin can select:
+
+1. Single Date
+2. Date Range
+3. Week
+4. Previous Week
+5. Month
+6. Previous Month
+7. Multiple Months
+8. Custom Date Range
+9. Full Financial Year
+
+
+============================================================
+52. QUICK DATE FILTERS
+============================================================
+
+Provide:
+
+TODAY
+YESTERDAY
+THIS WEEK
+LAST WEEK
+THIS MONTH
+LAST MONTH
+THIS YEAR
+CUSTOM RANGE
+
+
+============================================================
+53. CUSTOM DATE RANGE
+============================================================
+
+Provide:
+
+FROM DATE
+
+[ DD/MM/YYYY ]
+
+TO DATE
+
+[ DD/MM/YYYY ]
+
+[ GENERATE REPORT ]
+
+Example:
+
+FROM:
+15/06/2026
+
+TO:
+22/06/2026
+
+The report must contain ONLY data from the selected period.
+
+
+============================================================
+54. MONTHLY REPORT
+============================================================
+
+If admin chooses:
+
+JUNE 2026
+
+and clicks:
+
+GENERATE REPORT
+
+show:
+
+THE OREGANO CAFE
+
+FINANCIAL REPORT
+
+JUNE 2026
+
+--------------------------------
+
+TOTAL ORDERS
+
+COMPLETED ORDERS
+
+CANCELLED ORDERS
+
+TOTAL EARNINGS
+
+TOTAL EXPENSES
+
+NET PROFIT / LOSS
+
+--------------------------------
+
+
+============================================================
+55. REPORT EXAMPLE
+============================================================
+
+JUNE 2026
+
+TOTAL ORDERS
+842
+
+COMPLETED ORDERS
+810
+
+CANCELLED ORDERS
+32
+
+TOTAL EARNINGS
+₹2,84,500
+
+TOTAL EXPENSES
+₹1,02,300
+
+NET PROFIT
++₹1,82,200
+
+
+============================================================
+56. MULTIPLE MONTH REPORT
+============================================================
+
+Admin must be able to select multiple months.
+
+Example:
+
+APRIL 2026
+MAY 2026
+JUNE 2026
+
+Report:
+
+APRIL 2026
+Earnings
+Expenses
+Profit
+
+MAY 2026
+Earnings
+Expenses
+Profit
+
+JUNE 2026
+Earnings
+Expenses
+Profit
+
+--------------------------------
+
+COMBINED TOTAL
+
+TOTAL EARNINGS
+TOTAL EXPENSES
+TOTAL PROFIT
+
+
+============================================================
+57. FULL FINANCIAL YEAR
+============================================================
+
+Support Indian financial year:
+
+FY 2025–26
+
+Date range:
+
+01 April 2025
+to
+31 March 2026
+
+Report must show:
+
+TOTAL EARNINGS
+TOTAL EXPENSES
+TOTAL PROFIT / LOSS
+
+Month-wise:
+
+APRIL
+MAY
+JUNE
+JULY
+AUGUST
+SEPTEMBER
+OCTOBER
+NOVEMBER
+DECEMBER
+JANUARY
+FEBRUARY
+MARCH
+
+For each:
+
+Earnings
+Expenses
+Profit / Loss
+
+Then:
+
+FULL YEAR TOTAL
+
+Earnings
+Expenses
+Net Profit / Loss
+
+
+============================================================
+58. REPORT CHARTS
+============================================================
+
+Where useful, show professional charts:
+
+REVENUE VS EXPENSES
+
+MONTHLY EARNINGS
+
+MONTHLY EXPENSES
+
+MONTHLY PROFIT
+
+ORDER COUNT
+
+Do not overload the dashboard.
+
+Charts must be clean and easy to understand.
+
+
+============================================================
+59. GENERATE REPORT
+============================================================
+
+Provide:
+
+[ GENERATE REPORT ]
+
+After clicking, generate complete report for selected period.
+
+Include:
+
+Cafe Name
+Selected Date Range
+Total Orders
+Completed Orders
+Cancelled Orders
+Total Earnings
+Total Expenses
+Net Profit / Loss
+Expense Breakdown
+Order Breakdown
+Monthly Breakdown if applicable
+
+
+============================================================
+60. REPORT EXPORT
+============================================================
+
+If supported by the platform, provide:
+
+[ DOWNLOAD PDF ]
+
+[ DOWNLOAD CSV ]
+
+[ PRINT REPORT ]
+
+PDF should look professional enough to give to the cafe owner
+or accounting team.
+
+CSV should contain useful order/financial details.
+
+
+============================================================
+61. ORDER HISTORY
+============================================================
+
+Create:
+
+ORDER HISTORY
+
+Allow admin to search/filter historical orders.
+
+Filters:
+
+TODAY
+YESTERDAY
+THIS WEEK
+THIS MONTH
+CUSTOM RANGE
+
+Search by:
+
+Order ID
+Table Number
+
+
+============================================================
+62. TABLE MANAGEMENT
+============================================================
+
+Create an optional:
+
+TABLES
+
+section.
+
+Example:
+
+TABLE 1
+TABLE 2
+TABLE 3
+TABLE 4
+TABLE 5
+...
+TABLE 12
+
+Each table can show active order status.
+
+Example:
+
+TABLE 12
+
+1 ACTIVE ORDER
+
+₹760
+
+PENDING
+
+
+============================================================
+63. MULTIPLE ORDERS FROM SAME TABLE
+============================================================
+
+A table must be able to place multiple orders.
+
+Example:
+
+TABLE 12
+
+Order #001
+₹500
+COMPLETED
+
+Later:
+
+Order #002
+₹350
+PENDING
+
+Keep these as separate orders.
+
+Never automatically merge them.
+
+
+============================================================
+64. ADMIN ORDER CARD
+============================================================
+
+Premium order card:
+
+--------------------------------------------
+
+ORDER #ORD-20260903-0012
+
+TABLE 12
+
+10:42 PM
+
+--------------------------------------------
+
+2 × Margherita Pizza
+₹580
+
+1 × Oreo Milkshake
+₹180
+
+--------------------------------------------
+
+TOTAL
+
+₹760
+
+--------------------------------------------
+
+[ VIEW ORDER ]
+
+[ ✓ COMPLETE ] [ ✕ CANCEL ]
+
+--------------------------------------------
+
+Buttons must be large and easy to tap on mobile.
+
+
+============================================================
+65. ADMIN STATUS COLORS
+============================================================
+
+PENDING:
+
+Subtle amber/orange
+
+COMPLETED:
+
+Subtle green
+
+CANCELLED:
+
+Subtle red
+
+PROFIT:
+
+Positive green
+
+LOSS:
+
+Negative red
+
+Use subtle professional colors.
+
+Avoid extremely bright UI.
+
+
+============================================================
+66. ADMIN DESIGN
+============================================================
+
+Admin dashboard must look like a premium modern SaaS
+business dashboard.
+
+Use:
+
+- Clean cards
+- Premium tables
+- Rounded corners
+- Soft shadows
+- Good spacing
+- Premium typography
+- Brand colors
+- Clear status badges
+- Professional charts
+- Smooth transitions
+- Responsive layout
+
+
+============================================================
+67. ADMIN MOBILE
+============================================================
+
+Admin dashboard MUST work perfectly on:
+
+Mobile
+Tablet
+Desktop
+
+Cafe owner/staff should be able to manage orders from a phone.
+
+The:
+
+✓ COMPLETE
+
+and
+
+✕ CANCEL
+
+buttons must be easy to tap.
+
+Pending orders should be immediately visible.
+
+
+============================================================
+68. REALTIME ORDERS
+============================================================
+
+Preferred architecture:
+
+CUSTOMER
+↓
+DATABASE
+↓
+REALTIME ADMIN DASHBOARD
+
+When new order arrives:
+
+ADMIN DASHBOARD updates automatically.
+
+No manual refresh.
+
+If realtime backend is supported, use it.
+
+
+============================================================
+69. ORDER DUPLICATION PROTECTION
+============================================================
+
+Prevent accidental duplicate orders.
+
+When customer presses:
+
+PLACE ORDER
+
+disable the button while submitting.
+
+If customer taps multiple times quickly:
+
+create ONLY ONE order.
+
+After successful save:
+
+show Order Received screen.
+
+
+============================================================
+70. ERROR HANDLING
+============================================================
+
+If database/order submission fails:
+
+Show:
+
+"Unable to place your order right now.
+Please check your connection and try again."
+
+Do NOT show:
+
+ORDER RECEIVED
+
+unless the database successfully saved the order.
+
+Admin connection problem:
+
+"Connection issue — reconnecting..."
+
+
+============================================================
+71. DATA PERSISTENCE
+============================================================
+
+IMPORTANT:
+
+Orders must remain after browser refresh.
+
+Expenses must remain after browser refresh.
+
+Completed orders must remain stored.
+
+Cancelled orders must remain stored.
+
+Reports must use permanent database records.
+
+Do NOT use localStorage as the main source of truth.
+
+
+============================================================
+72. ORDER DELETION
+============================================================
+
+Do NOT permanently delete completed or cancelled orders
+through normal admin actions.
+
+Order records should remain available for:
+
+- History
+- Reports
+- Financial tracking
+- Auditing
+- Order analysis
+
+
+============================================================
+73. MENU SOURCE OF TRUTH
+============================================================
+
+SOURCE FILE:
+
+The Oregano Cafe Menu 2026.pdf
+
+This PDF is the source of truth for:
+
+- Menu names
+- Menu categories
+- Prices
+- Descriptions
+- Half / Full prices
+- Add-ons
+- Jain menu
+- Options
+
+Do NOT invent menu items.
+
+Do NOT invent prices.
+
+Do NOT remove menu sections.
+
+Do NOT change prices.
+
+Do NOT omit items from the supplied PDF.
+
+Convert the PDF into a proper interactive web menu.
+
+Do NOT simply embed the PDF as the website menu.
+
+
+============================================================
+74. COMPLETE MENU
+============================================================
+
+The following menu data must be represented in the website.
+
+Use the supplied PDF as the final source of truth.
+
+------------------------------------------------------------
+APPETIZERS
+------------------------------------------------------------
+
+Crispy Onion Rings (12 Pcs) — ₹150
+Jalapeno Cheese Poppers (8 Pcs) — ₹310
+American Cheese Corn Balls (8 Pcs) — ₹290
+Mozzarella Sticks (6 Pcs) — ₹310
+
+
+------------------------------------------------------------
+GARLIC BREADS
+------------------------------------------------------------
+
+Garlic Bread — ₹190
+Cheesy Garlic Bread — ₹290
+Cheese Chilli Toast — ₹310
+Cheese Bruschetta — ₹320
+Tandoori Cheese Garlic Bread — ₹340
+Pesto Cheese Garlic Bread — ₹390
+
+
+------------------------------------------------------------
+FRIES
+------------------------------------------------------------
+
+Classic French Fries — ₹130
+Cheesy French Fries — ₹220
+Peri Peri Fries — ₹150
+Peri Peri Cheesy Fries — ₹240
+Mexican Cheesy Fries — ₹260
+Banana Fries — ₹190
+Potato Wedges — ₹130
+Peri Peri Wedges — ₹150
+
+
+------------------------------------------------------------
+NACHOS
+------------------------------------------------------------
+
+Classic Cheese Nachos — ₹270
+
+Description:
+Warm melted cheese over crisp nachos with house salsa.
+
+Peri Peri Cheesy Nachos — ₹290
+
+Description:
+Cheesy nachos layered with bold peri peri seasoning.
+
+Add Double Cheese — ₹60
+
+
+------------------------------------------------------------
+BURGERS
+------------------------------------------------------------
+
+Chilli Potato Burger — ₹160
+Veg Cheese Burger — ₹180
+New York Style Cheese Burger — ₹190
+Mexican Burger — ₹200
+Mushroom & Beans Patty Burger — ₹220
+Jain Cheese Burger (Raw Banana) — ₹220
+Peri Peri Paneer Burger — ₹240
+
+
+------------------------------------------------------------
+MOMOS
+------------------------------------------------------------
+
+Classic Veg Momos (6 pcs) — ₹170
+Steamed / Fried
+
+Veg Chilli Momos (6 pcs) — ₹180
+Steamed / Fried
+
+Corn Cheese Momos (6 pcs) — ₹210
+Fried
+
+
+------------------------------------------------------------
+BAO
+------------------------------------------------------------
+
+Exotic Veg Crispy Bao — ₹360
+Paneer Crispy Bao — ₹410
+
+
+------------------------------------------------------------
+FONDUE
+------------------------------------------------------------
+
+Swiss Style Cheese Fondue — ₹370
+Mexican Cheese Fondue — ₹390
+Pav Bhaji Cheese Fondue — ₹350
+
+
+------------------------------------------------------------
+PIZZA
+------------------------------------------------------------
+
+Medium Size 8"
+
+Margherita Pizza — ₹290
+
+Description:
+Classic Pizza, Tomato sauce & Mozzarella
+garnished with basil leaves.
+
+Funghi de Bosco Pizza — ₹340
+
+Description:
+Loaded with Mushrooms, Garlic & Mozzarella.
+
+Tandoori Paneer Pizza — ₹370
+
+Description:
+Paneer marinated in tandoori sauce, Mozzarella,
+Capsicum & Onion.
+
+Peri Peri Paneer Pizza — ₹380
+
+Description:
+Paneer in Peri Peri mix, Jalapeños, Onions & Parsley.
+
+Mexican Pizza — ₹390
+
+Description:
+Mozzarella, Salsa, Bell peppers, Corn, Jalapeno,
+garnished with tortilla chip Salsa & Chipotle sauce.
+
+La Spani Pizza — ₹410
+
+Description:
+Creamy Spinach, Caramelised onions, Sundried tomato,
+Oregano, Onion rings & Mozzarella.
+
+Garden Delight Pizza — ₹390
+
+Description:
+Topped with pan tossed exotic veggies.
+
+The Oregano's Special Margherita Pizza — ₹390
+
+Description:
+Mozzarella, Sundried Tomato, Basil, House Pizza sauce,
+Balsamic Glaze Drizzle.
+
+Pesto Garden Delight Pizza — ₹410
+
+Description:
+Exotic veggies marinated in basil pesto sauce.
+
+Extra Cheese — ₹80
+
+Extra Topping — ₹30 each
+
+Toppings:
+
+Corn
+Jalapeno
+Black Olive
+Zucchini
+Mushroom
+Red/Yellow Bell Pepper
+Broccoli
+Capsicum
+Paneer
+Onions
+
+
+------------------------------------------------------------
+PASTA
+------------------------------------------------------------
+
+Penne Arrabiata (Red Sauce) — ₹330
+Penne Alfredo (White Sauce) — ₹370
+Penne Rosa (Pink Sauce) — ₹390
+Spaghetti Aglio e Olio — ₹390
+Creamy Penne Pesto — ₹430
+Mushroom Ravioli in Alfredo Sauce — ₹440
+Pesto Ricotta Gnocchi in Creamy Pesto Sauce — ₹470
+Four Cheese Ravioli in Rosa Sauce — ₹490
+
+
+------------------------------------------------------------
+CONTINENTAL RICE
+------------------------------------------------------------
+
+Butter Parsley Rice — ₹330
+With Exotic Veggies in Peri Peri Sauce
+
+Butter Coriander Rice — ₹340
+With Exotic Veggies in Creamy Tandoori Sauce
+
+Herbed Rice — ₹340
+With Exotic veggies in Mornay Sauce
+
+Mint Rice — ₹360
+With Exotic Veggies in Basil Pesto Sauce
+
+Mexican Rice — ₹380
+With Paneer Steak in Alfredo Sauce
+
+
+------------------------------------------------------------
+DIPS
+------------------------------------------------------------
+
+Mayo Dip — ₹20
+Chipotle Dip — ₹30
+Chocolate Dip — ₹30
+Cheese Dip — ₹30
+Sweet Chilli Mayo Dip — ₹40
+
+
+------------------------------------------------------------
+DESI JUNCTION — PREMIUM BIRYANI
+------------------------------------------------------------
+
+Subz-e-Bahar Biryani
+Half — ₹210
+Full — ₹330
+
+Mushroom Biryani
+Half — ₹230
+Full — ₹350
+
+Veg Hyderabadi Biryani
+Half — ₹230
+Full — ₹380
+
+Bhuna Paneer Biryani
+Half — ₹240
+Full — ₹390
+
+Kaju Paneer Biryani
+Half — ₹290
+Full — ₹460
+
+
+------------------------------------------------------------
+PAV BHAJI
+------------------------------------------------------------
+
+Served with 4 maska pav.
+
+TOC Pav Bhaji — ₹290
+TOC Cheese Pav Bhaji — ₹360
+
+Extra Single Sada Pav — ₹10
+Extra Single Maska Pav — ₹20
+
+TOC = The Oregano Cafe
+
+
+------------------------------------------------------------
+SIDES
+------------------------------------------------------------
+
+Fry Papad — ₹20
+Roasted Papad — ₹20
+Masala Papad — ₹50
+Cheese Masala Papad — ₹80
+Buttermilk (Chaas) — ₹60
+Masala Butter Milk — ₹80
+
+
+------------------------------------------------------------
+ORIENTAL EXPRESS — SOUPS
+------------------------------------------------------------
+
+Veg Manchow Soup — ₹140
+Veg Coriander Soup — ₹140
+Veg Hot n Sour Soup — ₹140
+Roasted Garlic Spinach Soup — ₹160
+Thai Soup (Tom Kha Gai Soup) — ₹190
+
+
+------------------------------------------------------------
+CHINESE STARTERS
+------------------------------------------------------------
+
+Chef's Style Chinese Bhel — ₹220
+Honey Chilli Potato — ₹230
+Crispy Schezwan Babycorn Dry — ₹240
+Exotic Veg Crispy — ₹260
+Paneer Chilli Dry — ₹270
+Mushroom Teriyaki — ₹280
+Kung Pao Paneer — ₹270
+Crackling Spinach Paneer — ₹290
+Paneer 65 — ₹290
+Korean Crispy Paneer — ₹310
+
+
+------------------------------------------------------------
+CHINESE RICE
+------------------------------------------------------------
+
+Veg Fried Rice
+Half — ₹120
+Full — ₹210
+
+Burnt Garlic Fried Rice
+Half — ₹140
+Full — ₹240
+
+Paneer Fried Rice
+Half — ₹180
+Full — ₹290
+
+Schezwan Fried Rice
+Half — ₹150
+Full — ₹260
+
+Thai Style Fried Rice
+Half — ₹150
+Full — ₹260
+
+Mung-Fung Fried Rice
+Half — ₹140
+Full — ₹250
+
+Singapore Fried Rice
+Half — ₹180
+Full — ₹290
+
+
+------------------------------------------------------------
+CHINESE NOODLES
+------------------------------------------------------------
+
+Wok Tossed Hakka Noodles
+Half — ₹110
+Full — ₹190
+
+Chilli Garlic Noodles
+Half — ₹120
+Full — ₹210
+
+Schezwan Hakka Noodles
+Half — ₹130
+Full — ₹230
+
+Burnt Garlic Noodles
+Half — ₹130
+Full — ₹230
+
+Thai Style Wok Tossed Noodles
+Half — ₹140
+Full — ₹240
+
+Chilli Coriander Noodles
+Half — ₹140
+Full — ₹240
+
+Hong Kong Noodles
+Half — ₹140
+Full — ₹240
+
+Singapore Noodles
+Half — ₹160
+Full — ₹260
+
+
+------------------------------------------------------------
+CHINESE GRAVY
+------------------------------------------------------------
+
+Served with House Special Fried Rice.
+
+Veg Manchurian Gravy with Fried Rice — ₹340
+Veg Chilli Basil Gravy with Fried Rice — ₹350
+Veg Hot Garlic Gravy with Fried Rice — ₹360
+Veg Black Bean Gravy with Fried Rice — ₹390
+Paneer Chilli Gravy with Fried Rice — ₹410
+Cottage Cheese in Devil Sauce with Fried Rice — ₹430
+Manchurian Balls in Dragon Sauce with Fried Rice — ₹460
+
+
+------------------------------------------------------------
+THAI CURRY
+------------------------------------------------------------
+
+Red Thai Curry With Butter Rice — ₹330
+Green Thai Curry With Butter Rice — ₹330
+
+
+------------------------------------------------------------
+MILKSHAKES
+------------------------------------------------------------
+
+Vanilla Milkshake — ₹150
+Chocolate Milkshake — ₹160
+Strawberry Milkshake — ₹170
+Oreo Milkshake — ₹180
+KitKat Milkshake — ₹190
+Choco Hazelnut Milkshake — ₹190
+Choco Brownie Milkshake — ₹220
+Blueberry Milkshake — ₹220
+Mango Milkshake — ₹240
+Berry Blast Milkshake — ₹240
+Strawberry Oreo Milkshake — ₹240
+Blueberry Oreo Milkshake — ₹260
+Boom Berry Milkshake — ₹280
+Brownie Tiramisu Milkshake — ₹280
+Nutella Milkshake — ₹280
+Nutella Oreo Milkshake — ₹290
+Biscoff Milkshake — ₹310
+
+
+------------------------------------------------------------
+MOCKTAILS
+------------------------------------------------------------
+
+Virgin Mojito — ₹150
+Blue Lagoon — ₹160
+Strawberry Fields — ₹160
+Green Apple Zing — ₹160
+Peach Mojito — ₹160
+Bubblegum Mojito — ₹170
+Lavender Margarita — ₹210
+Cosmopolitan — ₹210
+Purple Viking — ₹210
+Blueberry Lavender — ₹220
+
+
+------------------------------------------------------------
+COLD COFFEE
+------------------------------------------------------------
+
+Classic Cold Coffee — ₹160
+Mocha Cold Coffee — ₹180
+Hazelnut Cold Coffee — ₹210
+Tiramisu Cold Coffee — ₹210
+Irish Cold Coffee — ₹210
+Caramel Cold Coffee — ₹220
+
+
+------------------------------------------------------------
+ICED LATTE
+------------------------------------------------------------
+
+Iced Latte — ₹210
+Hazelnut Iced Latte — ₹230
+Tiramisu Iced Latte — ₹240
+Irish Iced Latte — ₹240
+Caramel Iced Latte — ₹250
+Biscoff Iced Latte — ₹290
+
+
+------------------------------------------------------------
+ICED TEA
+------------------------------------------------------------
+
+Lemon Iced Tea — ₹120
+Strawberry Iced Tea — ₹140
+Green Apple Iced Tea — ₹170
+Blueberry Iced Tea — ₹170
+Lavender Iced Tea — ₹170
+Peach Iced Tea — ₹160
+Mango Peach Iced Tea — ₹190
+
+
+------------------------------------------------------------
+HOT COFFEE
+------------------------------------------------------------
+
+Regular Hot Coffee — ₹60
+Vanilla Hot Coffee — ₹70
+Hazelnut Hot Coffee — ₹70
+Tiramisu Hot Coffee — ₹80
+Irish Hot Coffee — ₹80
+Caramel Hot Coffee — ₹90
+
+
+------------------------------------------------------------
+HOT CHOCOLATE
+------------------------------------------------------------
+
+Classic Hot Chocolate — ₹140
+Triple Sec Hot Chocolate — ₹150
+Hazelnut Hot Chocolate — ₹150
+"Mocha" Hot Chocolate — ₹140
+Brownie Hot Chocolate — ₹170
+Tiramisu Hot Chocolate — ₹160
+Hot Biscoff — ₹220
+
+
+------------------------------------------------------------
+WAFFLES
+------------------------------------------------------------
+
+Served with Vanilla Ice Cream.
+
+Chocolate Hazelnut Waffle — ₹210
+Overload Chocolate Waffle — ₹200
+Oreo Waffle — ₹230
+KitKat Waffle — ₹250
+Brownie Crumb Waffle — ₹260
+Nutella Waffle — ₹280
+Nutella Oreo Waffle — ₹290
+Lotus Biscoff Waffle — ₹310
+
+
+------------------------------------------------------------
+DESSERTS
+------------------------------------------------------------
+
+Choco Lava Cake — ₹100
+
+Choco Chip Brownie
+with Vanilla Ice Cream
+— ₹180
+
+Brownie Sundae — ₹250
+
+Honey Noodles
+with Vanilla Ice Cream & Almond Flakes
+— ₹250
+
+
+------------------------------------------------------------
+CHEESECAKE
+------------------------------------------------------------
+
+New York Style Cheesecake — ₹170
+
+ADD TOPPINGS:
+
+Chocolate — ₹30
+Hazelnut — ₹40
+Strawberry — ₹40
+Blueberry — ₹40
+Nutella — ₹60
+Biscoff — ₹70
+
+
+------------------------------------------------------------
+BOBAVERSE
+------------------------------------------------------------
+
+POPPING BOBA MOJITO
+
+Zesty Green Punch — ₹220
+Green Apple Mojito with Green Apple Popping Boba
+
+Blueberry Boba Mojito — ₹220
+Blueberry Mojito with Blueberry Popping Boba
+
+Berry Blast Boba Mojito — ₹220
+Strawberry Mojito with Blueberry Popping Boba
+
+Classic Zesty Mojito — ₹220
+Classic Mojito with Green Apple Popping Boba
+
+Blue Lagoon Bliss Boba — ₹220
+Blue Lagoon with Blueberry Popping Boba
+
+Peachy Zest Punch Boba — ₹220
+Peach Mojito with Green Apple Popping Boba
+
+
+------------------------------------------------------------
+BOBA ICED TEA
+------------------------------------------------------------
+
+Green Apple Iced Tea Boba — ₹190
+Green Apple Boba + Green Apple Iced Tea
+
+Blueberry Iced Tea Boba — ₹190
+Blueberry Boba + Blueberry Iced Tea
+
+Berry Fusion Iced Tea Boba — ₹190
+Blueberry Boba + Strawberry Iced Tea
+
+Peachy Breeze Iced Tea Boba — ₹190
+Green Apple Boba + Peach Iced Tea
+
+
+------------------------------------------------------------
+BEVERAGES
+------------------------------------------------------------
+
+Water Bottle 1 ltr — ₹20
+Bisleri Vedica 1 ltr — ₹60
+Thums Up 500 ml — ₹50
+Sprite 500 ml — ₹50
+Diet Coke — ₹60
+
+
+============================================================
+75. JAIN MENU
+============================================================
+
+JAIN MENU
+
+Jain Jalapeno Cheese Poppers — ₹310
+Jain American Cheese Corn Balls — ₹290
+Jain Mozzarella Sticks — ₹310
+Jain Mexican Cheese Fondue — ₹390
+Jain Cheese Butter Bread — ₹290
+Jain Cheese Bruschetta — ₹320
+Jain Cheese Chilli Toast — ₹310
+Jain Banana Fries — ₹190
+Jain Cheese Banana Fries — ₹250
+Jain Classic Cheese Nachos — ₹270
+Jain Corn Cheese Momos (Fried) — ₹210
+Jain Cheese Burger (Raw Banana) — ₹220
+Jain Penne Alfredo (White Sauce) — ₹370
+Jain Penne Rosa (Pink Sauce) — ₹390
+Jain Penne Arrabiata (Red Sauce) — ₹330
+Four Cheese Ravioli in Rosa Sauce — ₹490
+Jain Margherita Pizza — ₹290
+Jain Cheese & Corn Overload Pizza — ₹310
+Jain Farm Fresh Pizza — ₹340
+Jain Garden Delight Pizza — ₹390
+Jain Mexican Corn Pizza — ₹390
+Jain Achari Paneer Pizza — ₹410
+
+Additional Jain items:
+
+Exotic Veg Crispy Bao — ₹360
+Paneer Crispy Bao — ₹410
+
+Jain Manchow Soup — ₹140
+Jain Coriander Soup — ₹140
+
+Jain Chef's Style Chinese Bhel — ₹220
+Jain Exotic Veg Crispy — ₹260
+Jain Paneer Chilli Dry — ₹270
+Jain Paneer Crispy — ₹290
+Jain Kung Pao Paneer — ₹270
+Jain Crackling Spinach Paneer — ₹290
+
+Jain Veg Fried Rice
+Half — ₹120
+Full — ₹220
+
+Jain Paneer Fried Rice
+Half — ₹180
+Full — ₹290
+
+Jain Singapore Fried Rice
+Half — ₹180
+Full — ₹290
+
+Jain Wok Tossed Hakka Noodles
+Half — ₹110
+Full — ₹190
+
+Jain Chilli Coriander Noodles
+Half — ₹140
+Full — ₹240
+
+Jain HongKong Noodles
+Half — ₹140
+Full — ₹240
+
+Jain Singapore Noodles
+Half — ₹160
+Full — ₹260
+
+Jain Veg Chilli Basil Gravy with Fried Rice — ₹350
+Jain Paneer Chilli Gravy with Fried Rice — ₹410
+
+
+============================================================
+76. CAFE ETIQUETTE
+============================================================
+
+Add a premium collapsible section:
+
+CAFE ETIQUETTE
+
+Use the supplied PDF's guidelines.
+
+Include information about:
+
+Local Home Delivery:
+Free home delivery within the local area.
+
+Preparation Time:
+Please allow a minimum of 20 minutes to prepare and serve
+the meal.
+
+The cafe emphasizes quality preparation rather than
+fast-food service.
+
+Ordering Promptly:
+Customers are requested to place orders within
+10–15 minutes of being seated.
+
+Considerate Conversations:
+Maintain a calm and measured tone.
+
+Phone Etiquette:
+Avoid loud calls, speaker mode and video conferencing
+inside the cafe.
+
+Respectful Language:
+Offensive, vulgar or inappropriate language is not permitted.
+
+Mindful Photography:
+Keep photography within personal space.
+
+Professional Photography:
+Permission should be obtained from the counter before
+professional-grade cameras, Reels or Photoshoots.
+
+Celebrations:
+Obtain staff permission before using party poppers or
+similar celebration items.
+
+Public Displays of Affection:
+Avoid excessive PDA.
+
+Group Bookings:
+Contact the billing counter for private group reservations.
+
+Transparent Billing:
+No extra taxes or hidden charges are added to the bill.
+
+Keep this section compact and collapsible so it does not
+interfere with ordering.
+
+
+============================================================
+77. CUSTOMER FOOTER
+============================================================
+
+THE OREGANO CAFE
+
+EST. 2019
+
+GOOD FOOD.
+GOOD MOOD.
+GOOD TIMES.
+
+Links:
+
+MENU
+JAIN MENU
+CAFE ETIQUETTE
+CONTACT
+
+
+============================================================
+78. CUSTOMER RESPONSIVENESS
+============================================================
+
+Customer website must be:
+
+MOBILE FIRST
+
+Perfect on:
+
+Android
+iPhone
+Tablet
+Desktop
+
+Most customers will use a smartphone after scanning a QR code.
+
+Requirements:
+
+- Large touch targets
+- Readable text
+- Easy quantity controls
+- Sticky cart
+- No horizontal overflow
+- Fast scrolling
+- Easy category navigation
+- No unnecessary popups
+
+
+============================================================
+79. ADMIN RESPONSIVENESS
+============================================================
+
+Admin dashboard must also be responsive.
+
+Desktop:
+
+Sidebar + Dashboard
+
+Mobile:
+
+Hamburger navigation or bottom navigation.
+
+Pending orders must remain easy to manage from mobile.
+
+
+============================================================
+80. PERFORMANCE
+============================================================
+
+QR users may be using mobile data.
+
+Optimize:
+
+Images
+CSS
+JavaScript
+Fonts
+Database requests
+
+Website should load quickly.
+
+Avoid unnecessary heavy libraries.
+
+Avoid huge unoptimized images.
+
+
+============================================================
+81. ANIMATIONS
+============================================================
+
+Use subtle premium animations:
+
+- Hero fade-in
+- Menu item reveal
+- Add-to-cart animation
+- Cart count animation
+- Modal transitions
+- Order received animation
+- New order notification
+- Complete order animation
+- Cancel order animation
+- Report transitions
+
+Animations must be:
+
+SMOOTH
+FAST
+ELEGANT
+
+Do NOT use:
+
+- Excessive bouncing
+- Flashing
+- Slow animations
+- Distracting effects
+
+
+============================================================
+82. ACCESSIBILITY
+============================================================
+
+Use:
+
+- Good contrast
+- Readable text
+- Proper button labels
+- Accessible inputs
+- Keyboard navigation
+- Focus states
+- Alt text for food images
+- Large touch targets
+
+
+============================================================
+83. FINANCIAL DATA RULES
+============================================================
+
+IMPORTANT:
+
+Financial numbers must NEVER be hardcoded.
+
+All earnings must come from actual COMPLETED orders.
+
+All expenses must come from actual saved expense entries.
+
+Profit:
+
+COMPLETED ORDER REVENUE - EXPENSES
+
+Cancelled orders:
+
+DO NOT COUNT
+
+Pending orders:
+
+DO NOT COUNT
+
+Only completed orders count as revenue.
+
+
+============================================================
+84. REPORT ACCURACY
+============================================================
+
+Reports must use actual database data.
+
+Do NOT:
+
+- Generate fake values
+- Randomize numbers
+- Use sample numbers in production
+- Calculate from temporary frontend state
+- Ignore cancelled orders
+- Include pending orders as revenue
+
+
+============================================================
+85. DATE / TIME
+============================================================
+
+Store:
+
+Order date
+Order time
+Created timestamp
+Completed timestamp
+Cancelled timestamp
+
+Use the cafe's local timezone consistently.
+
+Expenses must also have a date.
+
+Financial reports must calculate data correctly according
+to selected dates.
+
+
+============================================================
+86. FINANCIAL REPORT EXAMPLE
+============================================================
+
+Suppose:
+
+Completed orders:
+
+₹500
+₹850
+₹1,200
+₹700
+
+EARNINGS:
+
+₹3,250
+
+Expenses:
+
+Milk — ₹500
+Vegetables — ₹300
+Cleaning — ₹200
+
+EXPENSES:
+
+₹1,000
+
+PROFIT:
+
+₹3,250 - ₹1,000
+
+= +₹2,250
+
+Dashboard:
+
+EARNINGS
+₹3,250
+
+EXPENSES
+₹1,000
+
+PROFIT
++₹2,250
+
+
+============================================================
+87. LOSS EXAMPLE
+============================================================
+
+Earnings:
+
+₹5,000
+
+Expenses:
+
+₹6,500
+
+NET:
+
+-₹1,500
+
+Display:
+
+NET LOSS
+
+-₹1,500
+
+
+============================================================
+88. ORDER HISTORY SEARCH
+============================================================
+
+Admin should be able to search:
+
+Order ID
+
+Example:
+
+ORD-20260903-0012
+
+or:
+
+Table 12
+
+Search results should show matching historical orders.
+
+
+============================================================
+89. ORDER STATUS FILTERS
+============================================================
+
+Provide filters:
+
+ALL
+PENDING
+COMPLETED
+CANCELLED
+
+Admin can quickly switch between statuses.
+
+
+============================================================
+90. TABLE FILTER
+============================================================
+
+Admin can filter orders by table number.
+
+Example:
+
+TABLE 12
+
+Show:
+
+All orders from Table 12.
+
+Include:
+
+Pending
+Completed
+Cancelled
+
+depending on selected filter.
+
+
+============================================================
+91. ADMIN SETTINGS
+============================================================
+
+Settings can include:
+
+Admin Profile
+Logout
+Cafe Information
+Table Configuration
+Menu Management if supported
+
+Do not expose sensitive backend credentials.
+
+
+============================================================
+92. QR CODE ARCHITECTURE
+============================================================
+
+The website must be QR-friendly.
+
+Each physical table can have a QR code.
+
+Future implementation:
+
+Table 1:
+
+https://website.com/?table=1
+
+Table 2:
+
+https://website.com/?table=2
+
+Table 3:
+
+https://website.com/?table=3
+
+etc.
+
+When scanned:
+
+Automatically identify table.
+
+Customer should be able to start ordering immediately.
+
+
+============================================================
+93. CUSTOMER ORDER EXPERIENCE
+============================================================
+
+Ideal customer experience:
+
+SCAN QR
+↓
+THE OREGANO CAFE
+↓
+TABLE 12
+↓
+EXPLORE MENU
+↓
+PIZZA
+↓
+SELECT PIZZA
+↓
+ADD
+↓
+MILKSHAKE
+↓
+ADD
+↓
+CART
+↓
+CONFIRM
+↓
+PLACE ORDER
+↓
+ORDER RECEIVED
+
+No login.
+
+No signup.
+
+No WhatsApp.
+
+No payment gateway.
+
+No unnecessary steps.
+
+
+============================================================
+94. ADMIN EXPERIENCE
+============================================================
+
+Ideal staff experience:
+
+ADMIN LOGIN
+↓
+DASHBOARD
+↓
+NEW ORDER RECEIVED
+↓
+TABLE 12
+↓
+VIEW ORDER
+↓
+PREPARE FOOD
+↓
+DELIVER TO TABLE
+↓
+✓ COMPLETE
+↓
+ORDER MOVES TO COMPLETED
+↓
+REVENUE UPDATES
+
+
+If customer cancels / cafe needs to cancel:
+
+PENDING ORDER
+↓
+✕ CANCEL
+↓
+CONFIRM
+↓
+CANCELLED
+↓
+CANCELLED ORDERS
+
+
+============================================================
+95. DAILY ACCOUNTING EXPERIENCE
+============================================================
+
+Admin:
+
+DAILY EARNINGS
+↓
+SEE COMPLETED ORDER REVENUE
+↓
+ADD EXPENSES
+↓
+SAVE EXPENSES
+↓
+SYSTEM CALCULATES
+↓
+EARNINGS
+-
+EXPENSES
+=
+PROFIT / LOSS
+
+
+============================================================
+96. MONTHLY ACCOUNTING EXPERIENCE
+============================================================
+
+Admin:
+
+FINANCIAL REPORTS
+↓
+SELECT JUNE 2026
+↓
+GENERATE REPORT
+↓
+SEE:
+
+TOTAL ORDERS
+COMPLETED ORDERS
+CANCELLED ORDERS
+EARNINGS
+EXPENSES
+PROFIT / LOSS
+EXPENSE BREAKDOWN
+MONTHLY DATA
+
+
+============================================================
+97. FULL YEAR ACCOUNTING EXPERIENCE
+============================================================
+
+Admin:
+
+FINANCIAL REPORTS
+↓
+SELECT FY 2025–26
+↓
+GENERATE REPORT
+
+Show:
+
+APRIL
+MAY
+JUNE
+JULY
+AUGUST
+SEPTEMBER
+OCTOBER
+NOVEMBER
+DECEMBER
+JANUARY
+FEBRUARY
+MARCH
+
+Each month:
+
+Earnings
+Expenses
+Profit/Loss
+
+Then:
+
+FULL YEAR EARNINGS
+FULL YEAR EXPENSES
+FULL YEAR PROFIT/LOSS
+
+
+============================================================
+98. IMPORTANT UI DETAILS
+============================================================
+
+Use beautiful:
+
+Cards
+Modals
+Tables
+Badges
+Buttons
+Charts
+Dropdowns
+Date Pickers
+Search
+Filters
+Toast Notifications
+Loading States
+Empty States
+Confirmation Dialogs
+
+Everything must have a consistent premium design.
+
+
+============================================================
+99. EMPTY STATES
+============================================================
+
+Pending Orders empty:
+
+NO PENDING ORDERS
+
+"All caught up! No orders are waiting."
+
+Completed Orders empty:
+
+NO COMPLETED ORDERS YET
+
+Cancelled Orders empty:
+
+NO CANCELLED ORDERS
+
+Cart empty:
+
+YOUR ORDER IS EMPTY
+
+"Add something delicious to get started."
+
+
+============================================================
+100. LOADING STATES
+============================================================
+
+Use elegant loading indicators while:
+
+- Loading menu
+- Loading orders
+- Saving order
+- Updating order status
+- Saving expenses
+- Generating reports
+
+Do not freeze the UI.
+
+
+============================================================
+101. SUCCESS NOTIFICATIONS
+============================================================
+
+Examples:
+
+✓ Order received successfully
+
+✓ Order marked as completed
+
+✓ Order cancelled successfully
+
+✓ Expense saved successfully
+
+✓ Expense updated successfully
+
+✓ Expense deleted successfully
+
+✓ Report generated successfully
+
+
+============================================================
+102. ERROR NOTIFICATIONS
+============================================================
+
+Examples:
+
+Unable to place order.
+
+Unable to update order.
+
+Unable to save expense.
+
+Unable to generate report.
+
+Please try again.
+
+Keep errors clear and user-friendly.
+
+
+============================================================
+103. ORDER CANCELLATION IMPORTANT RULE
+============================================================
+
+CANCEL does NOT mean DELETE.
+
+When admin cancels:
+
+Status = CANCELLED
+
+The original order remains in database.
+
+The order remains visible in:
+
+Cancelled Orders
+
+Order History
+
+Reports
+
+This is important for accurate records.
+
+
+============================================================
+104. FINANCIAL REPORT CANCELLATION RULE
+============================================================
+
+Example:
+
+Total Orders:
+100
+
+Completed:
+80
+
+Cancelled:
+20
+
+Completed Revenue:
+₹50,000
+
+Cancelled Order Value:
+₹12,000
+
+Earnings:
+
+₹50,000
+
+NOT:
+
+₹62,000
+
+
+============================================================
+105. FINAL NAVIGATION — CUSTOMER
+============================================================
+
+CUSTOMER:
+
+HOME
+MENU
+SEARCH
+JAIN MENU
+CART
+ORDER CONFIRMATION
+
+
+============================================================
+106. FINAL NAVIGATION — ADMIN
+============================================================
+
+ADMIN:
+
+DASHBOARD
+PENDING ORDERS
+COMPLETED ORDERS
+CANCELLED ORDERS
+ORDER HISTORY
+TABLES
+DAILY EARNINGS
+EXPENSES
+FINANCIAL REPORTS
+SETTINGS
+LOGOUT
+
+
+============================================================
+107. BACKEND REQUIREMENT
+============================================================
+
+This version requires a backend/database.
+
+Required:
+
+SECURE ADMIN AUTHENTICATION
+
+PERSISTENT ORDER DATABASE
+
+PERSISTENT EXPENSE DATABASE
+
+REALTIME ORDER UPDATES if supported
+
+FINANCIAL REPORT QUERIES
+
+SECURE ADMIN ROUTES
+
+
+============================================================
+108. DO NOT USE FAKE DATA
+============================================================
+
+Demo/sample data may be used only during development.
+
+Production dashboard must show real database data.
+
+Do NOT show fake:
+
+Orders
+Revenue
+Expenses
+Profit
+Reports
+
+
+============================================================
+109. NO PAYMENT GATEWAY
+============================================================
+
+Do NOT implement:
+
+UPI
+Credit Card
+Debit Card
+Net Banking
+Wallet
+Online Payment
+
+The system is for in-cafe ordering.
+
+Payment/billing can be handled separately by cafe staff.
+
+
+============================================================
+110. FINAL SYSTEM ARCHITECTURE
+============================================================
+
+CUSTOMER
+
+QR
+ ↓
+WEBSITE
+ ↓
+TABLE
+ ↓
+MENU
+ ↓
+CART
+ ↓
+PLACE ORDER
+ ↓
+DATABASE
+ ↓
+ORDER RECEIVED
+
+
+ADMIN
+
+LOGIN
+ ↓
+DASHBOARD
+ ↓
+PENDING ORDERS
+ ↓
+VIEW
+ ↓
+✓ COMPLETE
+OR
+✕ CANCEL
+ ↓
+COMPLETED / CANCELLED
+ ↓
+FINANCIAL DATA
+
+
+FINANCE
+
+COMPLETED ORDERS
+ ↓
+EARNINGS
+
+EXPENSES
+ ↓
+TOTAL EXPENSES
+
+EARNINGS - EXPENSES
+ ↓
+PROFIT / LOSS
+
+ ↓
+
+DAILY REPORT
+MONTHLY REPORT
+CUSTOM DATE REPORT
+MULTIPLE MONTH REPORT
+FULL FINANCIAL YEAR REPORT
+
+
+============================================================
+111. FINAL DESIGN QUALITY BAR
+============================================================
+
+The website should feel like:
+
+A PREMIUM CAFE DIGITAL EXPERIENCE
+
+NOT:
+
+A BASIC MENU WEBSITE.
+
+Customer side should feel:
+
+LUXURY
+MINIMAL
+ELEGANT
+FAST
+FOOD-FOCUSED
+
+Admin side should feel:
+
+PROFESSIONAL
+DATA-DRIVEN
+CLEAN
+POWERFUL
+EASY TO OPERATE
+
+The entire system should look polished enough to present
+directly to the cafe owner as a professional production
+website.
+
+
+============================================================
+112. ABSOLUTELY DO NOT DO
+============================================================
+
+❌ WhatsApp ordering
+❌ WhatsApp redirect
+❌ WhatsApp API
+❌ WhatsApp order messages
+
+❌ Customer login
+❌ Customer signup
+❌ Customer accounts
+❌ Customer OTP
+
+❌ Online payment
+
+❌ Fake orders
+❌ Fake earnings
+❌ Fake expenses
+❌ Fake reports
+
+❌ localStorage-only order system
+
+❌ Public admin dashboard
+
+❌ Admin credentials in frontend code
+
+❌ PDF-only menu
+
+❌ Missing menu categories
+
+❌ Incorrect prices
+
+❌ Hidden charges
+
+❌ Excessive animations
+
+❌ Cheap UI
+
+❌ Fake order confirmation
+
+❌ Permanently deleting cancelled orders
+
+
+============================================================
+113. FINAL OBJECTIVE
+============================================================
+
+Build a complete production-ready digital ecosystem for:
+
+THE OREGANO CAFE
+
+CUSTOMER:
+
+SCAN
+→
+ENTER TABLE
+→
+BROWSE
+→
+ORDER
+→
+DONE
+
+
+CAFE STAFF:
+
+RECEIVE
+→
+PREPARE
+→
+COMPLETE / CANCEL
+
+
+CAFE OWNER:
+
+ORDERS
+→
+EARNINGS
+→
+EXPENSES
+→
+PROFIT / LOSS
+→
+REPORTS
+
+
+Everything should happen inside ONE premium website.
+
+WHATSAPP MUST BE COMPLETELY REMOVED.
+
+CUSTOMERS MUST NOT CREATE ACCOUNTS.
+
+ONLY ADMIN HAS A LOGIN.
+
+ORDERS MUST BE STORED IN THE DATABASE.
+
+PENDING ORDERS MUST HAVE:
+
+✓ COMPLETE
+✕ CANCEL
+
+COMPLETED ORDERS MUST COUNT AS EARNINGS.
+
+CANCELLED ORDERS MUST NOT COUNT AS EARNINGS.
+
+EXPENSES MUST BE STORED INDIVIDUALLY.
+
+PROFIT MUST BE:
+
+COMPLETED ORDER EARNINGS - TOTAL EXPENSES
+
+ADMIN MUST BE ABLE TO GENERATE:
+
+DAILY REPORT
+WEEKLY REPORT
+MONTHLY REPORT
+CUSTOM DATE REPORT
+MULTIPLE MONTH REPORT
+FULL FINANCIAL YEAR REPORT
+
+The final website must be:
+
+ULTRA PRO MAX
+RICH
+PREMIUM
+MODERN
+RESPONSIVE
+FAST
+PROFESSIONAL
+PRODUCTION-READY
+
+
+============================================================
+END OF REQUIREMENTS
+============================================================
