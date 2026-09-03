@@ -1,0 +1,13 @@
+{
+  "name": "the-oregano-cafe",
+  "version": "1.0.0",
+  "description": "The Oregano Cafe - Premium QR Table Ordering & Admin Management System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
