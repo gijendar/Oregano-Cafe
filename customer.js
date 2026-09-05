@@ -22,7 +22,7 @@ let API_TOKEN = localStorage.getItem('toc_api_token') || '';
 async function apiCall(method, path, body) {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), 5000);
     const opts = { method, headers: { 'Content-Type': 'application/json' }, signal: controller.signal };
     if (API_TOKEN) opts.headers['X-Admin-Token'] = API_TOKEN;
     if (body) opts.body = JSON.stringify(body);

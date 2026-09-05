@@ -58,14 +58,49 @@ function connectSSE() {
 // ===========================
 // ADMIN INIT
 // ===========================
+// Try to restore authenticated session on admin page load
+async function tryRestoreSession() {
+  if (!loadAdminAuth()) return false;
+  // Verify the saved token still works with the server
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const opts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': API_TOKEN },
+      body: JSON.stringify({ username: 'admin', password: '' }),
+      signal: controller.signal
+    };
+    // Use a lightweight verification endpoint instead of login
+    const res = await fetch(API_BASE + '/dashboard', opts);
+    clearTimeout(timeout);
+    if (res.ok) return true;
+  } catch(e) {
+    console.warn('Session verification failed:', e.message);
+  }
+  return false;
+}
+
 if (isAdminPage) {
   document.getElementById('landing').style.display = 'none';
   document.getElementById('header').style.display = 'none';
   document.getElementById('footer').style.display = 'none';
   document.getElementById('floatingCart').style.display = 'none';
   document.getElementById('mainContent').style.display = 'none';
+
+  // Check if we have a saved auth token and verify it
   if (loadAdminAuth()) {
-    showAdminDashboard();
+    tryRestoreSession().then(valid => {
+      if (valid) {
+        showAdminDashboard();
+      } else {
+        // Token invalid — clear and show login
+        saveAdminAuth(false);
+        showAdminLogin();
+      }
+    }).catch(() => {
+      showAdminLogin();
+    });
   } else {
     showAdminLogin();
   }
@@ -78,8 +113,18 @@ window.addEventListener('hashchange', () => {
     document.getElementById('footer').style.display = 'none';
     document.getElementById('floatingCart').style.display = 'none';
     document.getElementById('mainContent').style.display = 'none';
+
     if (loadAdminAuth()) {
-      showAdminDashboard();
+      tryRestoreSession().then(valid => {
+        if (valid) {
+          showAdminDashboard();
+        } else {
+          saveAdminAuth(false);
+          showAdminLogin();
+        }
+      }).catch(() => {
+        showAdminLogin();
+      });
     } else {
       showAdminLogin();
     }
@@ -108,9 +153,13 @@ async function showAdminLogin() {
     $('adminLoginBtn').textContent = 'SIGNING IN...';
     $('adminError').classList.remove('show');
 
+      // Show loading in content area while auth is in progress
+    const content = $('adminContent');
+    if (content) content.innerHTML = '<div class="loading-spinner">Authenticating...</div>';
+
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const opts = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,7 +171,7 @@ async function showAdminLogin() {
       const data = await res.json();
 
       if (res.ok && data.success) {
-        // Successful authentication
+        // Successful authentication — save session and initialize dashboard
         setApiToken(data.token);
         saveAdminAuth(true);
         showAdminDashboard();
@@ -137,6 +186,7 @@ async function showAdminLogin() {
       }
     } catch(e) {
       // Network error or timeout
+      console.error('Login error:', e);
       $('adminError').textContent = 'Unable to connect to the server. Please try again.';
       $('adminError').classList.add('show');
     } finally {
@@ -201,25 +251,32 @@ function showAdminDashboard() {
 async function renderAdminSection(section) {
   const title = $('adminPageTitle');
   const content = $('adminContent');
-  if (!content) return Promise.reject('adminContent not found');
+  if (!content) {
+    console.error('renderAdminSection: adminContent not found');
+    return;
+  }
   content.innerHTML = '<div class="loading-spinner">Loading...</div>';
-  // Load orders and expenses in parallel for faster response
-  const [orders, expenses] = await Promise.all([
-    loadOrders().catch(() => []),
-    loadExpenses().catch(() => [])
-  ]);
-
-  switch (section) {
-    case 'dashboard': renderDashboard(content, orders, expenses); title.textContent = 'DASHBOARD'; break;
-    case 'pending': renderOrders(content, orders, 'PENDING'); title.textContent = 'PENDING ORDERS'; break;
-    case 'completed': renderOrders(content, orders, 'COMPLETED'); title.textContent = 'COMPLETED ORDERS'; break;
-    case 'cancelled': renderOrders(content, orders, 'CANCELLED'); title.textContent = 'CANCELLED ORDERS'; break;
-    case 'history': renderOrderHistory(content, orders); title.textContent = 'ORDER HISTORY'; break;
-    case 'earnings': renderEarnings(content, orders, expenses); title.textContent = 'DAILY EARNINGS'; break;
-    case 'expenses': renderExpenses(content, expenses); title.textContent = 'EXPENSES'; break;
-    case 'reports': renderReports(content, orders, expenses); title.textContent = 'FINANCIAL REPORTS'; break;
-    case 'tables': renderTables(content, orders); title.textContent = 'TABLES'; break;
-    case 'settings': renderSettings(content); title.textContent = 'SETTINGS'; break;
+  try {
+    // Load orders and expenses in parallel for faster response
+    const [orders, expenses] = await Promise.all([
+      loadOrders().catch(e => { console.warn('loadOrders failed:', e.message); return []; }),
+      loadExpenses().catch(e => { console.warn('loadExpenses failed:', e.message); return []; })
+    ]);
+    switch (section) {
+      case 'dashboard': renderDashboard(content, orders, expenses); title.textContent = 'DASHBOARD'; break;
+      case 'pending': renderOrders(content, orders, 'PENDING'); title.textContent = 'PENDING ORDERS'; break;
+      case 'completed': renderOrders(content, orders, 'COMPLETED'); title.textContent = 'COMPLETED ORDERS'; break;
+      case 'cancelled': renderOrders(content, orders, 'CANCELLED'); title.textContent = 'CANCELLED ORDERS'; break;
+      case 'history': renderOrderHistory(content, orders); title.textContent = 'ORDER HISTORY'; break;
+      case 'earnings': renderEarnings(content, orders, expenses); title.textContent = 'DAILY EARNINGS'; break;
+      case 'expenses': renderExpenses(content, expenses); title.textContent = 'EXPENSES'; break;
+      case 'reports': renderReports(content, orders, expenses); title.textContent = 'FINANCIAL REPORTS'; break;
+      case 'tables': renderTables(content, orders); title.textContent = 'TABLES'; break;
+      case 'settings': renderSettings(content); title.textContent = 'SETTINGS'; break;
+    }
+  } catch(e) {
+    console.error('renderAdminSection error:', e);
+    content.innerHTML = '<div class="admin-empty"><h3>Unable to load this section</h3><p>Please try again.</p></div>';
   }
 }
 
