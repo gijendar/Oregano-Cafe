@@ -13,30 +13,40 @@ let currentTableBillNum = null;
 // ===========================
 function connectRealtime() {
   if (typeof EventSource === 'undefined') return; // no realtime support — manual refresh only
-  connectSSE();
+  try {
+    connectSSE();
+  } catch(e) {
+    console.warn('Realtime connection failed:', e.message);
+  }
 }
 
 function connectSSE() {
   if (sseSource) { sseSource.close(); sseSource = null; }
-  sseSource = new EventSource(API_BASE + '/events?token=' + API_TOKEN);
+  try {
+    sseSource = new EventSource(API_BASE + '/events?token=' + API_TOKEN);
+  } catch(e) {
+    console.warn('SSE connection failed:', e.message);
+    sseSource = null;
+    return;
+  }
   sseSource.addEventListener('new_order', e => {
     showToast('🔔 New order received!');
     if (currentAdminSection === 'dashboard' || currentAdminSection === 'pending')
-      renderAdminSection(currentAdminSection);
+      renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('order_completed', e => {
-    if (currentAdminSection !== 'tables') renderAdminSection(currentAdminSection);
-    else renderAdminSection('tables');
+    if (currentAdminSection !== 'tables') renderAdminSection(currentAdminSection).catch(() => {});
+    else renderAdminSection('tables').catch(() => {});
   });
   sseSource.addEventListener('order_cancelled', e => {
-    renderAdminSection(currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('order_deleted', e => {
-    renderAdminSection(currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('table_paid', e => {
     showToast('💰 Table payment settled!');
-    renderAdminSection(currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.onerror = () => {
     // SSE failed — no automatic refresh; reload the page manually if needed
@@ -92,53 +102,97 @@ async function showAdminLogin() {
   $('adminLoginBtn').onclick = async () => {
     const email = $('adminEmail').value.trim();
     const pass = $('adminPassword').value;
-    const result = await apiCall('POST', '/login', { username: email, password: pass });
-    if (result && result.success) {
-      setApiToken(result.token);
-      saveAdminAuth(true);
-      $('adminError').classList.remove('show');
-      showAdminDashboard();
-    } else if (email === 'admin' && pass === 'admin123') {
-      setApiToken('admin-session-token');
-      saveAdminAuth(true);
-      $('adminError').classList.remove('show');
-      showAdminDashboard();
-    } else {
+
+    // Disable button and show loading state
+    $('adminLoginBtn').disabled = true;
+    $('adminLoginBtn').textContent = 'SIGNING IN...';
+    $('adminError').classList.remove('show');
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const opts = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: email, password: pass }),
+        signal: controller.signal
+      };
+      const res = await fetch(API_BASE + '/login', opts);
+      clearTimeout(timeout);
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        // Successful authentication
+        setApiToken(data.token);
+        saveAdminAuth(true);
+        showAdminDashboard();
+      } else if (res.status === 401) {
+        // Wrong credentials
+        $('adminError').textContent = 'Invalid credentials. Please check your ID and password.';
+        $('adminError').classList.add('show');
+      } else {
+        // Server error or other unexpected response
+        $('adminError').textContent = 'Unable to connect to the server. Please try again.';
+        $('adminError').classList.add('show');
+      }
+    } catch(e) {
+      // Network error or timeout
+      $('adminError').textContent = 'Unable to connect to the server. Please try again.';
       $('adminError').classList.add('show');
+    } finally {
+      // Always re-enable the button
+      $('adminLoginBtn').disabled = false;
+      $('adminLoginBtn').textContent = 'LOGIN';
     }
   };
   $('adminPassword').addEventListener('keydown', e => { if (e.key === 'Enter') $('adminLoginBtn').click() });
 }
 
 function showAdminDashboard() {
-  $('adminLoginPage').style.display = 'none';
-  const landing = $('landing'); if (landing) landing.style.display = 'none';
-  const hdr = $('header'); if (hdr) hdr.style.display = 'none';
-  const ftr = $('footer'); if (ftr) ftr.style.display = 'none';
-  const fc = $('floatingCart'); if (fc) fc.style.display = 'none';
-  const mc = $('mainContent'); if (mc) mc.style.display = 'none';
-  $('adminLayout').classList.add('active');
-  renderAdminSection(currentAdminSection);
+  try {
+    // Hide all non-admin elements
+    $('adminLoginPage').style.display = 'none';
+    const landing = $('landing'); if (landing) landing.style.display = 'none';
+    const hdr = $('header'); if (hdr) hdr.style.display = 'none';
+    const ftr = $('footer'); if (ftr) ftr.style.display = 'none';
+    const fc = $('floatingCart'); if (fc) fc.style.display = 'none';
+    const mc = $('mainContent'); if (mc) mc.style.display = 'none';
 
-  connectRealtime();
+    // Show admin layout immediately — dashboard shell visible before data loads
+    $('adminLayout').classList.add('active');
 
-  document.querySelectorAll('.admin-nav-item').forEach(item => {
-    item.addEventListener('click', () => {
-      currentAdminSection = item.dataset.section;
-      document.querySelectorAll('.admin-nav-item').forEach(n => n.classList.remove('active'));
-      item.classList.add('active');
-      renderAdminSection(currentAdminSection);
-      $('adminSidebar').classList.remove('open');
+    // Load data asynchronously — one failed request won't hide the dashboard
+    renderAdminSection(currentAdminSection).catch(() => {
+      const content = $('adminContent');
+      if (content) content.innerHTML = '<div class="admin-empty"><h3>Unable to load this section</h3><p>Please try refreshing the page.</p></div>';
     });
-  });
 
-  $('adminHamburger').onclick = () => $('adminSidebar').classList.toggle('open');
+    // Connect realtime — wrapped to prevent errors from blocking UI
+    connectRealtime();
 
-  $('adminLogoutBtn').onclick = () => {
-    if (sseSource) { sseSource.close(); sseSource = null; }
-    saveAdminAuth(false);
-    window.location.href = '/';
-  };
+    // Nav item clicks
+    document.querySelectorAll('.admin-nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        currentAdminSection = item.dataset.section;
+        document.querySelectorAll('.admin-nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        renderAdminSection(currentAdminSection).catch(() => {});
+        $('adminSidebar').classList.remove('open');
+      });
+    });
+
+    $('adminHamburger').onclick = () => $('adminSidebar').classList.toggle('open');
+
+    $('adminLogoutBtn').onclick = () => {
+      if (sseSource) { sseSource.close(); sseSource = null; }
+      saveAdminAuth(false);
+      window.location.href = '/';
+    };
+  } catch(e) {
+    console.error('Dashboard initialization error:', e);
+    // Ensure layout is visible even if something fails
+    $('adminLayout').classList.add('active');
+  }
 }
 
 // ===========================
@@ -147,9 +201,13 @@ function showAdminDashboard() {
 async function renderAdminSection(section) {
   const title = $('adminPageTitle');
   const content = $('adminContent');
+  if (!content) return Promise.reject('adminContent not found');
   content.innerHTML = '<div class="loading-spinner">Loading...</div>';
-  const orders = await loadOrders();
-  const expenses = await loadExpenses();
+  // Load orders and expenses in parallel for faster response
+  const [orders, expenses] = await Promise.all([
+    loadOrders().catch(() => []),
+    loadExpenses().catch(() => [])
+  ]);
 
   switch (section) {
     case 'dashboard': renderDashboard(content, orders, expenses); title.textContent = 'DASHBOARD'; break;
