@@ -38,7 +38,8 @@ const db = {
 
 // Middleware
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname))); // fallback for root files during local dev
 
 // Auth middleware
 function authMiddleware(req, res, next) {
@@ -886,6 +887,18 @@ app.get('/api/health', async (req, res) => {
     return res.json({ status: 'ok', database: 'supabase', orders: orders || 0, expenses: expenses || 0, sessions: sessions || 0, payments: payments || 0 });
   }
   res.json({ status: 'ok', database: 'in-memory', orders: db.orders.length, expenses: db.expenses.length, sessions: db.table_sessions.length, payments: db.payments.length });
+});
+
+// ===========================
+// STATIC JS FILES — served explicitly for Vercel compatibility
+// ===========================
+app.get('/customer.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(path.join(__dirname, 'public', 'customer.js'));
+});
+app.get('/admin.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(path.join(__dirname, 'public', 'admin.js'));
 });
 
 // ===========================
