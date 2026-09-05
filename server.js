@@ -511,10 +511,15 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`\n🍕 THE OREGANO CAFE — Server running on http://localhost:${PORT}`);
-  console.log(`📋 Customer: http://localhost:${PORT}`);
-  console.log(`🔒 Admin: http://localhost:${PORT}#admin`);
-  console.log(`📊 API Health: http://localhost:${PORT}/api/health\n`);
-});
+// Export for Vercel serverless
+module.exports = app;
+
+// Start server (only when running locally, not on Vercel)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n🍕 THE OREGANO CAFE — Server running on http://localhost:${PORT}`);
+    console.log(`📋 Customer: http://localhost:${PORT}`);
+    console.log(`🔒 Admin: http://localhost:${PORT}#admin`);
+    console.log(`📊 API Health: http://localhost:${PORT}/api/health\n`);
+  });
+}
