@@ -11,16 +11,9 @@ let currentTableBillNum = null;
 // ===========================
 // SSE REALTIME CONNECTION
 // ===========================
-let pollingInterval = null;
-let lastPollTime = 0;
-
 function connectRealtime() {
-  // Try SSE first
-  if (typeof EventSource !== 'undefined') {
-    connectRealtime();
-  } else {
-    startPolling();
-  }
+  if (typeof EventSource === 'undefined') return; // no realtime support — manual refresh only
+  connectSSE();
 }
 
 function connectSSE() {
@@ -46,24 +39,10 @@ function connectSSE() {
     renderAdminSection(currentAdminSection);
   });
   sseSource.onerror = () => {
-    // SSE failed — fall back to polling
+    // SSE failed — no automatic refresh; reload the page manually if needed
     sseSource.close();
     sseSource = null;
-    startPolling();
   };
-  // If SSE connects, stop polling
-  sseSource.onopen = () => {
-    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-  };
-}
-
-function startPolling() {
-  if (pollingInterval) return;
-  pollingInterval = setInterval(async () => {
-    try {
-      renderAdminSection(currentAdminSection);
-    } catch(e) { /* silent */ }
-  }, 15000); // 15-second polling fallback
 }
 
 // ===========================
@@ -120,6 +99,7 @@ async function showAdminLogin() {
       $('adminError').classList.remove('show');
       showAdminDashboard();
     } else if (email === 'admin' && pass === 'admin123') {
+      setApiToken('admin-session-token');
       saveAdminAuth(true);
       $('adminError').classList.remove('show');
       showAdminDashboard();

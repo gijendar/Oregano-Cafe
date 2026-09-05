@@ -51,12 +51,16 @@ function authMiddleware(req, res, next) {
 // ===========================
 // SSE ENDPOINT
 // On Vercel serverless: SSE connections hang and cause 504s.
-// Admin frontend will use polling fallback when SSE unavailable.
+// Admin frontend uses SSE only (no polling fallback).
 // ===========================
-app.get('/api/events', authMiddleware, (req, res) => {
+app.get('/api/events', (req, res) => {
+  // EventSource cannot send custom headers, so the token arrives as a query param.
+  const token = req.headers['x-admin-token'] || req.query.token;
+  if (token !== 'admin-session-token') return res.status(401).json({ error: 'Invalid token' });
+
   if (process.env.VERCEL) {
-    // Vercel serverless: SSE not supported, return status for polling fallback
-    return res.json({ mode: 'poll', message: 'SSE not available on Vercel, use polling' });
+    // Vercel serverless: SSE not supported, client falls back to manual refresh
+    return res.json({ mode: 'poll', message: 'SSE not available on Vercel' });
   }
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
