@@ -11,6 +11,18 @@ let currentTableBillNum = null;
 // ===========================
 // SSE REALTIME CONNECTION
 // ===========================
+let pollingInterval = null;
+let lastPollTime = 0;
+
+function connectRealtime() {
+  // Try SSE first
+  if (typeof EventSource !== 'undefined') {
+    connectRealtime();
+  } else {
+    startPolling();
+  }
+}
+
 function connectSSE() {
   if (sseSource) { sseSource.close(); sseSource = null; }
   sseSource = new EventSource(API_BASE + '/events?token=' + API_TOKEN);
@@ -34,10 +46,24 @@ function connectSSE() {
     renderAdminSection(currentAdminSection);
   });
   sseSource.onerror = () => {
-    setTimeout(() => {
-      if (API_TOKEN && loadAdminAuth()) connectSSE();
-    }, 5000);
+    // SSE failed — fall back to polling
+    sseSource.close();
+    sseSource = null;
+    startPolling();
   };
+  // If SSE connects, stop polling
+  sseSource.onopen = () => {
+    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+  };
+}
+
+function startPolling() {
+  if (pollingInterval) return;
+  pollingInterval = setInterval(async () => {
+    try {
+      renderAdminSection(currentAdminSection);
+    } catch(e) { /* silent */ }
+  }, 15000); // 15-second polling fallback
 }
 
 // ===========================
@@ -114,7 +140,7 @@ function showAdminDashboard() {
   $('adminLayout').classList.add('active');
   renderAdminSection(currentAdminSection);
 
-  connectSSE();
+  connectRealtime();
 
   document.querySelectorAll('.admin-nav-item').forEach(item => {
     item.addEventListener('click', () => {

@@ -50,8 +50,14 @@ function authMiddleware(req, res, next) {
 
 // ===========================
 // SSE ENDPOINT
+// On Vercel serverless: SSE connections hang and cause 504s.
+// Admin frontend will use polling fallback when SSE unavailable.
 // ===========================
 app.get('/api/events', authMiddleware, (req, res) => {
+  if (process.env.VERCEL) {
+    // Vercel serverless: SSE not supported, return status for polling fallback
+    return res.json({ mode: 'poll', message: 'SSE not available on Vercel, use polling' });
+  }
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -879,11 +885,13 @@ app.get('/api/health', async (req, res) => {
 });
 
 // ===========================
-// CATCH-ALL ROUTE
+// CATCH-ALL (only for local dev, not Vercel)
 // ===========================
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
+if (!process.env.VERCEL) {
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+  });
+}
 
 // Export for Vercel serverless
 module.exports = app;
