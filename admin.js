@@ -49,38 +49,37 @@ function connectSSE() {
     renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.onerror = () => {
-    // SSE failed — no automatic refresh; reload the page manually if needed
     sseSource.close();
     sseSource = null;
   };
 }
 
 // ===========================
-// ADMIN INIT
+// SESSION VERIFICATION
+// Uses a lightweight GET to verify the saved token is still valid.
 // ===========================
-// Try to restore authenticated session on admin page load
 async function tryRestoreSession() {
   if (!loadAdminAuth()) return false;
-  // Verify the saved token still works with the server
+  if (!API_TOKEN) return false;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const opts = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': API_TOKEN },
-      body: JSON.stringify({ username: 'admin', password: '' }),
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(API_BASE + '/dashboard', {
+      method: 'GET',
+      headers: { 'X-Admin-Token': API_TOKEN },
       signal: controller.signal
-    };
-    // Use a lightweight verification endpoint instead of login
-    const res = await fetch(API_BASE + '/dashboard', opts);
+    });
     clearTimeout(timeout);
-    if (res.ok) return true;
+    return res.ok;
   } catch(e) {
     console.warn('Session verification failed:', e.message);
   }
   return false;
 }
 
+// ===========================
+// ADMIN INIT
+// ===========================
 if (isAdminPage) {
   document.getElementById('landing').style.display = 'none';
   document.getElementById('header').style.display = 'none';
@@ -88,17 +87,18 @@ if (isAdminPage) {
   document.getElementById('floatingCart').style.display = 'none';
   document.getElementById('mainContent').style.display = 'none';
 
-  // Check if we have a saved auth token and verify it
-  if (loadAdminAuth()) {
+  // If we have a saved token, verify it before showing dashboard
+  if (loadAdminAuth() && API_TOKEN) {
     tryRestoreSession().then(valid => {
       if (valid) {
         showAdminDashboard();
       } else {
-        // Token invalid — clear and show login
+        // Token expired or invalid — clear and show login
         saveAdminAuth(false);
         showAdminLogin();
       }
     }).catch(() => {
+      // Network error — still show login
       showAdminLogin();
     });
   } else {
@@ -114,7 +114,7 @@ window.addEventListener('hashchange', () => {
     document.getElementById('floatingCart').style.display = 'none';
     document.getElementById('mainContent').style.display = 'none';
 
-    if (loadAdminAuth()) {
+    if (loadAdminAuth() && API_TOKEN) {
       tryRestoreSession().then(valid => {
         if (valid) {
           showAdminDashboard();
@@ -144,29 +144,34 @@ async function showAdminLogin() {
   const fc = $('floatingCart'); if (fc) fc.style.display = 'none';
   const mc = $('mainContent'); if (mc) mc.style.display = 'none';
 
+  // Clear any previous loading state in adminContent
+  const content = $('adminContent');
+  if (content) content.innerHTML = '';
+
   $('adminLoginBtn').onclick = async () => {
     const email = $('adminEmail').value.trim();
     const pass = $('adminPassword').value;
+
+    if (!email || !pass) {
+      $('adminError').textContent = 'Please enter both username and password.';
+      $('adminError').classList.add('show');
+      return;
+    }
 
     // Disable button and show loading state
     $('adminLoginBtn').disabled = true;
     $('adminLoginBtn').textContent = 'SIGNING IN...';
     $('adminError').classList.remove('show');
 
-      // Show loading in content area while auth is in progress
-    const content = $('adminContent');
-    if (content) content.innerHTML = '<div class="loading-spinner">Authenticating...</div>';
-
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const opts = {
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(API_BASE + '/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: email, password: pass }),
         signal: controller.signal
-      };
-      const res = await fetch(API_BASE + '/login', opts);
+      });
       clearTimeout(timeout);
       const data = await res.json();
 
@@ -174,28 +179,35 @@ async function showAdminLogin() {
         // Successful authentication — save session and initialize dashboard
         setApiToken(data.token);
         saveAdminAuth(true);
+        $('adminError').classList.remove('show');
+        // Initialize dashboard directly from confirmed auth state
         showAdminDashboard();
       } else if (res.status === 401) {
-        // Wrong credentials
         $('adminError').textContent = 'Invalid credentials. Please check your ID and password.';
         $('adminError').classList.add('show');
       } else {
-        // Server error or other unexpected response
         $('adminError').textContent = 'Unable to connect to the server. Please try again.';
         $('adminError').classList.add('show');
       }
     } catch(e) {
-      // Network error or timeout
       console.error('Login error:', e);
-      $('adminError').textContent = 'Unable to connect to the server. Please try again.';
+      if (e.name === 'AbortError') {
+        $('adminError').textContent = 'Server is starting up. Please try again in a moment.';
+      } else {
+        $('adminError').textContent = 'Unable to connect to the server. Please try again.';
+      }
       $('adminError').classList.add('show');
     } finally {
-      // Always re-enable the button
       $('adminLoginBtn').disabled = false;
       $('adminLoginBtn').textContent = 'LOGIN';
     }
   };
-  $('adminPassword').addEventListener('keydown', e => { if (e.key === 'Enter') $('adminLoginBtn').click() });
+  // Remove old keydown listener by cloning (prevents duplicate listeners)
+  const oldPw = $('adminPassword');
+  const newPw = oldPw.cloneNode(true);
+  oldPw.parentNode.replaceChild(newPw, oldPw);
+  newPw.addEventListener('keydown', e => { if (e.key === 'Enter') $('adminLoginBtn').click() });
+  $('adminEmail').focus();
 }
 
 function showAdminDashboard() {
@@ -212,7 +224,8 @@ function showAdminDashboard() {
     $('adminLayout').classList.add('active');
 
     // Load data asynchronously — one failed request won't hide the dashboard
-    renderAdminSection(currentAdminSection).catch(() => {
+    renderAdminSection(currentAdminSection).catch(err => {
+      console.error('Dashboard section load failed:', err);
       const content = $('adminContent');
       if (content) content.innerHTML = '<div class="admin-empty"><h3>Unable to load this section</h3><p>Please try refreshing the page.</p></div>';
     });
@@ -220,7 +233,7 @@ function showAdminDashboard() {
     // Connect realtime — wrapped to prevent errors from blocking UI
     connectRealtime();
 
-    // Nav item clicks
+    // Nav item clicks — only attach once
     document.querySelectorAll('.admin-nav-item').forEach(item => {
       item.addEventListener('click', () => {
         currentAdminSection = item.dataset.section;
@@ -242,6 +255,8 @@ function showAdminDashboard() {
     console.error('Dashboard initialization error:', e);
     // Ensure layout is visible even if something fails
     $('adminLayout').classList.add('active');
+    const content = $('adminContent');
+    if (content) content.innerHTML = '<div class="admin-empty"><h3>Something went wrong</h3><p>Please refresh the page.</p></div>';
   }
 }
 

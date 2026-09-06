@@ -13,36 +13,68 @@ let currentTableBillNum = null;
 // ===========================
 function connectRealtime() {
   if (typeof EventSource === 'undefined') return; // no realtime support — manual refresh only
-  connectSSE();
+  try {
+    connectSSE();
+  } catch(e) {
+    console.warn('Realtime connection failed:', e.message);
+  }
 }
 
 function connectSSE() {
   if (sseSource) { sseSource.close(); sseSource = null; }
-  sseSource = new EventSource(API_BASE + '/events?token=' + API_TOKEN);
+  try {
+    sseSource = new EventSource(API_BASE + '/events?token=' + API_TOKEN);
+  } catch(e) {
+    console.warn('SSE connection failed:', e.message);
+    sseSource = null;
+    return;
+  }
   sseSource.addEventListener('new_order', e => {
     showToast('🔔 New order received!');
     if (currentAdminSection === 'dashboard' || currentAdminSection === 'pending')
-      renderAdminSection(currentAdminSection);
+      renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('order_completed', e => {
-    if (currentAdminSection !== 'tables') renderAdminSection(currentAdminSection);
-    else renderAdminSection('tables');
+    if (currentAdminSection !== 'tables') renderAdminSection(currentAdminSection).catch(() => {});
+    else renderAdminSection('tables').catch(() => {});
   });
   sseSource.addEventListener('order_cancelled', e => {
-    renderAdminSection(currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('order_deleted', e => {
-    renderAdminSection(currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('table_paid', e => {
     showToast('💰 Table payment settled!');
-    renderAdminSection(currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.onerror = () => {
-    // SSE failed — no automatic refresh; reload the page manually if needed
     sseSource.close();
     sseSource = null;
   };
+}
+
+// ===========================
+// SESSION VERIFICATION
+// Uses a lightweight GET to verify the saved token is still valid.
+// ===========================
+async function tryRestoreSession() {
+  if (!loadAdminAuth()) return false;
+  if (!API_TOKEN) return false;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(API_BASE + '/dashboard', {
+      method: 'GET',
+      headers: { 'X-Admin-Token': API_TOKEN },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    return res.ok;
+  } catch(e) {
+    console.warn('Session verification failed:', e.message);
+  }
+  return false;
 }
 
 // ===========================
@@ -54,8 +86,21 @@ if (isAdminPage) {
   document.getElementById('footer').style.display = 'none';
   document.getElementById('floatingCart').style.display = 'none';
   document.getElementById('mainContent').style.display = 'none';
-  if (loadAdminAuth()) {
-    showAdminDashboard();
+
+  // If we have a saved token, verify it before showing dashboard
+  if (loadAdminAuth() && API_TOKEN) {
+    tryRestoreSession().then(valid => {
+      if (valid) {
+        showAdminDashboard();
+      } else {
+        // Token expired or invalid — clear and show login
+        saveAdminAuth(false);
+        showAdminLogin();
+      }
+    }).catch(() => {
+      // Network error — still show login
+      showAdminLogin();
+    });
   } else {
     showAdminLogin();
   }
@@ -68,8 +113,18 @@ window.addEventListener('hashchange', () => {
     document.getElementById('footer').style.display = 'none';
     document.getElementById('floatingCart').style.display = 'none';
     document.getElementById('mainContent').style.display = 'none';
-    if (loadAdminAuth()) {
-      showAdminDashboard();
+
+    if (loadAdminAuth() && API_TOKEN) {
+      tryRestoreSession().then(valid => {
+        if (valid) {
+          showAdminDashboard();
+        } else {
+          saveAdminAuth(false);
+          showAdminLogin();
+        }
+      }).catch(() => {
+        showAdminLogin();
+      });
     } else {
       showAdminLogin();
     }
@@ -89,56 +144,120 @@ async function showAdminLogin() {
   const fc = $('floatingCart'); if (fc) fc.style.display = 'none';
   const mc = $('mainContent'); if (mc) mc.style.display = 'none';
 
+  // Clear any previous loading state in adminContent
+  const content = $('adminContent');
+  if (content) content.innerHTML = '';
+
   $('adminLoginBtn').onclick = async () => {
     const email = $('adminEmail').value.trim();
     const pass = $('adminPassword').value;
-    const result = await apiCall('POST', '/login', { username: email, password: pass });
-    if (result && result.success) {
-      setApiToken(result.token);
-      saveAdminAuth(true);
-      $('adminError').classList.remove('show');
-      showAdminDashboard();
-    } else if (email === 'admin' && pass === 'admin123') {
-      setApiToken('admin-session-token');
-      saveAdminAuth(true);
-      $('adminError').classList.remove('show');
-      showAdminDashboard();
-    } else {
+
+    if (!email || !pass) {
+      $('adminError').textContent = 'Please enter both username and password.';
       $('adminError').classList.add('show');
+      return;
+    }
+
+    // Disable button and show loading state
+    $('adminLoginBtn').disabled = true;
+    $('adminLoginBtn').textContent = 'SIGNING IN...';
+    $('adminError').classList.remove('show');
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(API_BASE + '/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: email, password: pass }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        // Successful authentication — save session and initialize dashboard
+        setApiToken(data.token);
+        saveAdminAuth(true);
+        $('adminError').classList.remove('show');
+        // Initialize dashboard directly from confirmed auth state
+        showAdminDashboard();
+      } else if (res.status === 401) {
+        $('adminError').textContent = 'Invalid credentials. Please check your ID and password.';
+        $('adminError').classList.add('show');
+      } else {
+        $('adminError').textContent = 'Unable to connect to the server. Please try again.';
+        $('adminError').classList.add('show');
+      }
+    } catch(e) {
+      console.error('Login error:', e);
+      if (e.name === 'AbortError') {
+        $('adminError').textContent = 'Server is starting up. Please try again in a moment.';
+      } else {
+        $('adminError').textContent = 'Unable to connect to the server. Please try again.';
+      }
+      $('adminError').classList.add('show');
+    } finally {
+      $('adminLoginBtn').disabled = false;
+      $('adminLoginBtn').textContent = 'LOGIN';
     }
   };
-  $('adminPassword').addEventListener('keydown', e => { if (e.key === 'Enter') $('adminLoginBtn').click() });
+  // Remove old keydown listener by cloning (prevents duplicate listeners)
+  const oldPw = $('adminPassword');
+  const newPw = oldPw.cloneNode(true);
+  oldPw.parentNode.replaceChild(newPw, oldPw);
+  newPw.addEventListener('keydown', e => { if (e.key === 'Enter') $('adminLoginBtn').click() });
+  $('adminEmail').focus();
 }
 
 function showAdminDashboard() {
-  $('adminLoginPage').style.display = 'none';
-  const landing = $('landing'); if (landing) landing.style.display = 'none';
-  const hdr = $('header'); if (hdr) hdr.style.display = 'none';
-  const ftr = $('footer'); if (ftr) ftr.style.display = 'none';
-  const fc = $('floatingCart'); if (fc) fc.style.display = 'none';
-  const mc = $('mainContent'); if (mc) mc.style.display = 'none';
-  $('adminLayout').classList.add('active');
-  renderAdminSection(currentAdminSection);
+  try {
+    // Hide all non-admin elements
+    $('adminLoginPage').style.display = 'none';
+    const landing = $('landing'); if (landing) landing.style.display = 'none';
+    const hdr = $('header'); if (hdr) hdr.style.display = 'none';
+    const ftr = $('footer'); if (ftr) ftr.style.display = 'none';
+    const fc = $('floatingCart'); if (fc) fc.style.display = 'none';
+    const mc = $('mainContent'); if (mc) mc.style.display = 'none';
 
-  connectRealtime();
+    // Show admin layout immediately — dashboard shell visible before data loads
+    $('adminLayout').classList.add('active');
 
-  document.querySelectorAll('.admin-nav-item').forEach(item => {
-    item.addEventListener('click', () => {
-      currentAdminSection = item.dataset.section;
-      document.querySelectorAll('.admin-nav-item').forEach(n => n.classList.remove('active'));
-      item.classList.add('active');
-      renderAdminSection(currentAdminSection);
-      $('adminSidebar').classList.remove('open');
+    // Load data asynchronously — one failed request won't hide the dashboard
+    renderAdminSection(currentAdminSection).catch(err => {
+      console.error('Dashboard section load failed:', err);
+      const content = $('adminContent');
+      if (content) content.innerHTML = '<div class="admin-empty"><h3>Unable to load this section</h3><p>Please try refreshing the page.</p></div>';
     });
-  });
 
-  $('adminHamburger').onclick = () => $('adminSidebar').classList.toggle('open');
+    // Connect realtime — wrapped to prevent errors from blocking UI
+    connectRealtime();
 
-  $('adminLogoutBtn').onclick = () => {
-    if (sseSource) { sseSource.close(); sseSource = null; }
-    saveAdminAuth(false);
-    window.location.href = '/';
-  };
+    // Nav item clicks — only attach once
+    document.querySelectorAll('.admin-nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        currentAdminSection = item.dataset.section;
+        document.querySelectorAll('.admin-nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        renderAdminSection(currentAdminSection).catch(() => {});
+        $('adminSidebar').classList.remove('open');
+      });
+    });
+
+    $('adminHamburger').onclick = () => $('adminSidebar').classList.toggle('open');
+
+    $('adminLogoutBtn').onclick = () => {
+      if (sseSource) { sseSource.close(); sseSource = null; }
+      saveAdminAuth(false);
+      window.location.href = '/';
+    };
+  } catch(e) {
+    console.error('Dashboard initialization error:', e);
+    // Ensure layout is visible even if something fails
+    $('adminLayout').classList.add('active');
+    const content = $('adminContent');
+    if (content) content.innerHTML = '<div class="admin-empty"><h3>Something went wrong</h3><p>Please refresh the page.</p></div>';
+  }
 }
 
 // ===========================
@@ -147,21 +266,32 @@ function showAdminDashboard() {
 async function renderAdminSection(section) {
   const title = $('adminPageTitle');
   const content = $('adminContent');
+  if (!content) {
+    console.error('renderAdminSection: adminContent not found');
+    return;
+  }
   content.innerHTML = '<div class="loading-spinner">Loading...</div>';
-  const orders = await loadOrders();
-  const expenses = await loadExpenses();
-
-  switch (section) {
-    case 'dashboard': renderDashboard(content, orders, expenses); title.textContent = 'DASHBOARD'; break;
-    case 'pending': renderOrders(content, orders, 'PENDING'); title.textContent = 'PENDING ORDERS'; break;
-    case 'completed': renderOrders(content, orders, 'COMPLETED'); title.textContent = 'COMPLETED ORDERS'; break;
-    case 'cancelled': renderOrders(content, orders, 'CANCELLED'); title.textContent = 'CANCELLED ORDERS'; break;
-    case 'history': renderOrderHistory(content, orders); title.textContent = 'ORDER HISTORY'; break;
-    case 'earnings': renderEarnings(content, orders, expenses); title.textContent = 'DAILY EARNINGS'; break;
-    case 'expenses': renderExpenses(content, expenses); title.textContent = 'EXPENSES'; break;
-    case 'reports': renderReports(content, orders, expenses); title.textContent = 'FINANCIAL REPORTS'; break;
-    case 'tables': renderTables(content, orders); title.textContent = 'TABLES'; break;
-    case 'settings': renderSettings(content); title.textContent = 'SETTINGS'; break;
+  try {
+    // Load orders and expenses in parallel for faster response
+    const [orders, expenses] = await Promise.all([
+      loadOrders().catch(e => { console.warn('loadOrders failed:', e.message); return []; }),
+      loadExpenses().catch(e => { console.warn('loadExpenses failed:', e.message); return []; })
+    ]);
+    switch (section) {
+      case 'dashboard': renderDashboard(content, orders, expenses); title.textContent = 'DASHBOARD'; break;
+      case 'pending': renderOrders(content, orders, 'PENDING'); title.textContent = 'PENDING ORDERS'; break;
+      case 'completed': renderOrders(content, orders, 'COMPLETED'); title.textContent = 'COMPLETED ORDERS'; break;
+      case 'cancelled': renderOrders(content, orders, 'CANCELLED'); title.textContent = 'CANCELLED ORDERS'; break;
+      case 'history': renderOrderHistory(content, orders); title.textContent = 'ORDER HISTORY'; break;
+      case 'earnings': renderEarnings(content, orders, expenses); title.textContent = 'DAILY EARNINGS'; break;
+      case 'expenses': renderExpenses(content, expenses); title.textContent = 'EXPENSES'; break;
+      case 'reports': renderReports(content, orders, expenses); title.textContent = 'FINANCIAL REPORTS'; break;
+      case 'tables': renderTables(content, orders); title.textContent = 'TABLES'; break;
+      case 'settings': renderSettings(content); title.textContent = 'SETTINGS'; break;
+    }
+  } catch(e) {
+    console.error('renderAdminSection error:', e);
+    content.innerHTML = '<div class="admin-empty"><h3>Unable to load this section</h3><p>Please try again.</p></div>';
   }
 }
 
