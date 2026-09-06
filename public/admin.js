@@ -304,7 +304,7 @@ function renderDashboard(el, orders, expenses, tables) {
   const profit = earnings - todayExpenses;
 
   // Calculate available/occupied tables from tables API data
-  const totalTables = 12;
+  const totalTables = 20;
   const occupiedTables = (tables || []).filter(t => t.status === 'OCCUPIED').length;
   const availableTables = totalTables - occupiedTables;
 

@@ -90,17 +90,31 @@ function showToast(msg){
 // ===========================
 // TABLE / LANDING
 // ===========================
+const TOTAL_TABLES = 20;
+
 if(!isAdminPage){
 (function initLanding(){
   const urlParams=new URLSearchParams(window.location.search);
   const tableParam=urlParams.get('table');
-  if(tableParam && !isNaN(tableParam) && Number(tableParam)>0){
-    currentTable=Number(tableParam);
-    showMenu();
+  // Validate URL/QR table parameter
+  if(tableParam){
+    const v=Number(tableParam);
+    if(Number.isInteger(v) && v>=1 && v<=TOTAL_TABLES){
+      currentTable=v;
+      showMenu();
+    } else {
+      // Invalid table in URL - show error but don't proceed
+      $('tableError').textContent = 'Please enter a table number between 1-' + TOTAL_TABLES + '.';
+      $('tableError').classList.add('show');
+    }
   }
   $('continueBtn').addEventListener('click',()=>{
-    const v=parseInt($('tableInput').value);
-    if(!v||v<1||v>100){ $('tableError').classList.add('show'); return }
+    const v=Number($('tableInput').value);
+    if(!Number.isInteger(v) || v<1 || v>TOTAL_TABLES){
+      $('tableError').textContent = 'Please enter a table number between 1-' + TOTAL_TABLES + '.';
+      $('tableError').classList.add('show');
+      return;
+    }
     $('tableError').classList.remove('show');
     currentTable=v;
     showMenu();

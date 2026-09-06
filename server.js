@@ -324,10 +324,17 @@ app.get('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
 }));
 
 // Create order (customer-facing)
+const TOTAL_TABLES = 20;
+
 app.post('/api/orders', asyncWrap(async (req, res) => {
   const { table, items } = req.body;
   if (!table || !items || items.length === 0) {
     return res.status(400).json({ error: 'Table and items are required' });
+  }
+  // Validate table number (1-20)
+  const tableNum = Number(table);
+  if (!Number.isInteger(tableNum) || tableNum < 1 || tableNum > TOTAL_TABLES) {
+    return res.status(400).json({ error: 'Please enter a table number between 1-' + TOTAL_TABLES + '.' });
   }
 
   const now = new Date();
