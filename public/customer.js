@@ -22,7 +22,7 @@ let API_TOKEN = localStorage.getItem('toc_api_token') || '';
 async function apiCall(method, path, body) {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 15000);
     const opts = { method, headers: { 'Content-Type': 'application/json' }, signal: controller.signal };
     
     // Diagnostic: log request details (without exposing token)

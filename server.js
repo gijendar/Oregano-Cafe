@@ -470,39 +470,66 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
   const tables = [];
 
   if (USE_DB) {
+    // Optimized: Fetch all active sessions in ONE query
+    const { data: activeSessions } = await supabase
+      .from('table_sessions')
+      .select('id, "table"')
+      .eq('status', 'ACTIVE');
+
+    // Get all session IDs that have active sessions
+    const activeSessionIds = new Set((activeSessions || []).map(s => s.id));
+
+    // Fetch all orders for these sessions in ONE query
+    let allSessionOrders = [];
+    if (activeSessionIds.size > 0) {
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('session_id, order_status, total')
+        .in('session_id', Array.from(activeSessionIds));
+      allSessionOrders = orders || [];
+    }
+
+    // Build a map of session data for quick lookup
+    const sessionMap = new Map();
+    for (const s of (activeSessions || [])) {
+      sessionMap.set(s.id, { table: s.table, session: s });
+    }
+
+    // Build a map of order data per session
+    const sessionOrderMap = new Map();
+    for (const order of allSessionOrders) {
+      if (!sessionOrderMap.has(order.session_id)) {
+        sessionOrderMap.set(order.session_id, []);
+      }
+      sessionOrderMap.get(order.session_id).push(order);
+    }
+
+    // Build tables array
     for (let i = 1; i <= 20; i++) {
-      const session = await getActiveSession(i);
+      const sessionData = sessionMap.get(i);
+      const session = sessionData ? sessionData.session : null;
+      const sessionId = session ? session.id : null;
+
       let unpaidOrders = [];
       let runningBill = 0;
       let pendingOrders = 0;
-      let allSessionOrders = [];
+      let allOrders = [];
 
-      if (session) {
-        const { data: uo } = await supabase
-          .from('orders')
-          .select('total')
-          .eq('session_id', session.id)
-          .eq('order_status', 'COMPLETED')
-          .eq('payment_status', 'UNPAID');
-        unpaidOrders = uo || [];
+      if (sessionId && sessionOrderMap.has(sessionId)) {
+        allOrders = sessionOrderMap.get(sessionId);
+        unpaidOrders = allOrders.filter(o => o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
         runningBill = unpaidOrders.reduce((sum, o) => sum + Number(o.total), 0);
-
-        const { data: ao } = await supabase
-          .from('orders')
-          .select('order_status')
-          .eq('session_id', session.id);
-        allSessionOrders = ao || [];
-        pendingOrders = allSessionOrders.filter(o => o.order_status === 'PENDING').length;
+        pendingOrders = allOrders.filter(o => o.order_status === 'PENDING').length;
       }
 
       tables.push({
         number: i,
         has_active_session: !!session,
-        session_id: session ? session.id : null,
+        session_id: sessionId,
         running_bill: runningBill,
         unpaid_count: unpaidOrders.length,
         pending_count: pendingOrders,
-        total_orders: allSessionOrders.length,
+        total_orders: allOrders.length,
         status: session ? (runningBill > 0 ? 'OPEN BILL' : 'NO ORDERS') : 'AVAILABLE'
       });
     }
