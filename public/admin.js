@@ -62,14 +62,10 @@ async function tryRestoreSession() {
   if (!loadAdminAuth()) return false;
   if (!API_TOKEN) return false;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(API_BASE + '/dashboard', {
       method: 'GET',
-      headers: { 'X-Admin-Token': API_TOKEN },
-      signal: controller.signal
+      headers: { 'X-Admin-Token': API_TOKEN }
     });
-    clearTimeout(timeout);
     return res.ok;
   } catch(e) {
     console.warn('Session verification failed:', e.message);
@@ -164,15 +160,11 @@ async function showAdminLogin() {
     $('adminError').classList.remove('show');
 
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
       const res = await fetch(API_BASE + '/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: email, password: pass }),
-        signal: controller.signal
+        body: JSON.stringify({ username: email, password: pass })
       });
-      clearTimeout(timeout);
       const data = await res.json();
 
       if (res.ok && data.success) {
@@ -191,11 +183,7 @@ async function showAdminLogin() {
       }
     } catch(e) {
       console.error('Login error:', e);
-      if (e.name === 'AbortError') {
-        $('adminError').textContent = 'Server is starting up. Please try again in a moment.';
-      } else {
-        $('adminError').textContent = 'Unable to connect to the server. Please try again.';
-      }
+      $('adminError').textContent = 'Unable to connect to the server. Please try again.';
       $('adminError').classList.add('show');
     } finally {
       $('adminLoginBtn').disabled = false;
