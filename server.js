@@ -12,7 +12,21 @@ const PORT = process.env.PORT || 10000;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 const USE_DB = !!(supabaseUrl && supabaseKey);
-const supabase = USE_DB ? createClient(supabaseUrl, supabaseKey) : null;
+
+if (USE_DB) {
+  // Log only the project hostname (not the full URL with sensitive path)
+  try {
+    const urlObj = new URL(supabaseUrl);
+    const projectHost = urlObj.hostname;
+    console.log(`[SUPABASE] Connected to project: ${projectHost}`);
+  } catch (e) {
+    console.log('[SUPABASE] Connected (URL format could not be parsed)');
+  }
+  const supabase = createClient(supabaseUrl, supabaseKey);
+} else {
+  console.log('[SUPABASE] Not configured - using in-memory fallback');
+  const supabase = null;
+}
 
 // SSE clients (in-memory — works on both local and Vercel)
 const sseClients = [];
