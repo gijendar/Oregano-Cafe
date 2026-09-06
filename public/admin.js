@@ -12,11 +12,14 @@ let currentTableBillNum = null;
 // SSE REALTIME CONNECTION
 // ===========================
 function connectRealtime() {
-  if (typeof EventSource === 'undefined') return; // no realtime support — manual refresh only
+  if (typeof EventSource === 'undefined') {
+    console.warn('[SSE] EventSource not supported in this browser');
+    return;
+  }
   try {
     connectSSE();
   } catch(e) {
-    console.warn('Realtime connection failed:', e.message);
+    console.warn('[SSE] Realtime connection failed:', e.message);
   }
 }
 
@@ -24,6 +27,7 @@ function connectSSE() {
   if (sseSource) { sseSource.close(); sseSource = null; }
   try {
     sseSource = new EventSource(API_BASE + '/events?token=' + API_TOKEN);
+    console.log('[SSE] Connected to', API_BASE + '/events?token=' + API_TOKEN.substring(0, 20) + '...');
   } catch(e) {
     console.warn('SSE connection failed:', e.message);
     sseSource = null;
