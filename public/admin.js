@@ -260,13 +260,14 @@ async function renderAdminSection(section) {
   }
   content.innerHTML = '<div class="loading-spinner">Loading...</div>';
   try {
-    // Load orders and expenses in parallel for faster response
-    const [orders, expenses] = await Promise.all([
+    // Load orders, expenses, and tables in parallel for faster response
+    const [orders, expenses, tables] = await Promise.all([
       loadOrders().catch(e => { console.warn('loadOrders failed:', e.message); return []; }),
-      loadExpenses().catch(e => { console.warn('loadExpenses failed:', e.message); return []; })
+      loadExpenses().catch(e => { console.warn('loadExpenses failed:', e.message); return []; }),
+      apiCall('GET', '/tables').catch(e => { console.warn('loadTables failed:', e.message); return []; })
     ]);
     switch (section) {
-      case 'dashboard': renderDashboard(content, orders, expenses); title.textContent = 'DASHBOARD'; break;
+      case 'dashboard': renderDashboard(content, orders, expenses, tables); title.textContent = 'DASHBOARD'; break;
       case 'pending': renderOrders(content, orders, 'PENDING'); title.textContent = 'PENDING ORDERS'; break;
       case 'completed': renderOrders(content, orders, 'COMPLETED'); title.textContent = 'COMPLETED ORDERS'; break;
       case 'cancelled': renderOrders(content, orders, 'CANCELLED'); title.textContent = 'CANCELLED ORDERS'; break;
@@ -286,7 +287,7 @@ async function renderAdminSection(section) {
 // ===========================
 // DASHBOARD
 // ===========================
-function renderDashboard(el, orders, expenses) {
+function renderDashboard(el, orders, expenses, tables) {
   const today = new Date().toISOString().split('T')[0];
   const todayOrders = orders.filter(o => o.date === today);
   const pending = orders.filter(o => o.order_status === 'PENDING');
@@ -302,9 +303,10 @@ function renderDashboard(el, orders, expenses) {
   const todayExpenses = expenses.filter(e => e.date === today).reduce((s, e) => s + e.amount, 0);
   const profit = earnings - todayExpenses;
 
-  // Active tables with open bills
-  const activeSessions = orders.filter(o => o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
-  const activeTables = [...new Set(activeSessions.map(o => o.table))];
+  // Calculate available/occupied tables from tables API data
+  const totalTables = 12;
+  const occupiedTables = (tables || []).filter(t => t.status === 'OCCUPIED').length;
+  const availableTables = totalTables - occupiedTables;
 
   el.innerHTML = `
     <div class="stat-cards">
@@ -317,7 +319,8 @@ function renderDashboard(el, orders, expenses) {
       <div class="stat-card"><div class="stat-card-label">ONLINE</div><div class="stat-card-value">${formatPrice(onlineTotal)}</div></div>
       <div class="stat-card"><div class="stat-card-label">TODAY'S EXPENSES</div><div class="stat-card-value">${formatPrice(todayExpenses)}</div></div>
       <div class="stat-card"><div class="stat-card-label">TODAY'S NET</div><div class="stat-card-value ${profit >= 0 ? 'profit' : 'loss'}">${profit >= 0 ? '+' : ''}${formatPrice(profit)}</div></div>
-      <div class="stat-card"><div class="stat-card-label">OPEN TABLES</div><div class="stat-card-value pending">${activeTables.length}</div></div>
+      <div class="stat-card"><div class="stat-card-label">AVAILABLE TABLES</div><div class="stat-card-value">${availableTables}</div></div>
+      <div class="stat-card"><div class="stat-card-label">OCCUPIED TABLES</div><div class="stat-card-value pending">${occupiedTables}</div></div>
     </div>
     <h3 style="font-family:'Playfair Display',serif;font-size:20px;color:var(--olive-dark);margin-bottom:16px">Recent Pending Orders</h3>
     ${pending.length === 0 ? '<div class="admin-empty"><h3>NO PENDING ORDERS</h3><p>All caught up! No orders are waiting.</p></div>' : ''}
@@ -553,15 +556,24 @@ async function renderTables(el, orders) {
 
   let html = '<div class="stat-cards">';
   tables.forEach(t => {
-    const hasBill = t.has_active_session && t.unpaid_count > 0;
-    const borderColor = hasBill ? 'var(--pending-amber)' : 'var(--border)';
+    const isOccupied = t.status === 'OCCUPIED';
+    const borderColor = isOccupied ? 'var(--pending-amber)' : 'var(--border)';
+    
+    // Payment status: UNPAID if there are unpaid orders, otherwise N/A for available tables
+    let paymentStatus = 'N/A';
+    if (isOccupied && t.unpaid_count > 0) {
+      paymentStatus = 'UNPAID';
+    } else if (isOccupied) {
+      paymentStatus = 'PAID'; // All orders in session are paid but session not closed
+    }
+    
     html += `
-      <div class="table-billing-card ${hasBill ? 'has-bill' : ''}" style="border-left:4px solid ${borderColor}" onclick="viewTableBill(${t.number})">
+      <div class="table-billing-card ${isOccupied ? 'has-bill' : ''}" style="border-left:4px solid ${borderColor}" onclick="viewTableBill(${t.number})">
         <div class="table-num">TABLE ${t.number}</div>
-        <div class="table-status ${hasBill ? 'open' : 'available'}">${t.status}</div>
+        <div class="table-status ${isOccupied ? 'occupied' : 'available'}">${t.status}</div>
         <div class="table-orders-count">Orders: ${t.total_orders} ${t.pending_count > 0 ? '· Pending: ' + t.pending_count : ''}</div>
-        ${hasBill ? '<div style="font-size:13px;color:var(--pending-amber);font-weight:600">Unpaid: ' + t.unpaid_count + '</div>' : ''}
-        <div class="table-bill-amount">${t.running_bill > 0 ? formatPrice(t.running_bill) : '—'}</div>
+        ${isOccupied ? '<div style="font-size:13px;color:var(--text-muted);margin-top:4px">Payment: ' + paymentStatus + '</div>' : ''}
+        ${t.running_bill > 0 ? '<div class="table-bill-amount">' + formatPrice(t.running_bill) + '</div>' : ''}
       </div>
     `;
   });

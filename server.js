@@ -531,7 +531,9 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
         unpaid_count: unpaidOrders.length,
         pending_count: pendingOrders,
         total_orders: allOrders.length,
-        status: session ? (runningBill > 0 ? 'OPEN BILL' : 'NO ORDERS') : 'AVAILABLE'
+        // OCCUPIED if there's an active session (regardless of unpaid bill)
+        // AVAILABLE only when no active session
+        status: session ? 'OCCUPIED' : 'AVAILABLE'
       });
     }
     return res.json(tables);
@@ -560,7 +562,8 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
       unpaid_count: unpaidOrders.length,
       pending_count: pendingOrders,
       total_orders: allSessionOrders.length,
-      status: session ? (runningBill > 0 ? 'OPEN BILL' : 'NO ORDERS') : 'AVAILABLE'
+      // OCCUPIED if there's an active session, AVAILABLE otherwise
+      status: session ? 'OCCUPIED' : 'AVAILABLE'
     });
   }
   res.json(tables);
