@@ -366,6 +366,11 @@ function orderCardHTML(o) {
   } else if (o.payment_status === 'NOT_APPLICABLE') {
     paymentInfo = `<span class="status-badge status-na">N/A</span>`;
   }
+  let typeInfo = '';
+  const typeLabel = o.order_type === 'dine-in' ? 'Dine In' : o.order_type === 'takeaway' ? 'Takeaway' : o.order_type === 'delivery' ? 'Delivery' : 'Dine In';
+  if (o.order_type && o.order_type !== 'dine-in') {
+    typeInfo = `<div class="order-card-type" style="font-size:11px;color:var(--gold);font-weight:600;letter-spacing:.5px;margin-bottom:6px">${typeLabel}${o.delivery && o.delivery.region ? ' — ' + (o.delivery.region.name || o.delivery.region) : ''}</div>`;
+  }
 
   let actions = '';
   if (o.order_status === 'PENDING') {
@@ -400,6 +405,7 @@ function orderCardHTML(o) {
         <div><div class="order-card-id">${o.id}</div><div class="order-card-table">TABLE ${o.table}</div></div>
         <div class="order-card-time">${o.time}${o.date ? ' · ' + o.date : ''}</div>
       </div>
+      ${typeInfo}
       <div class="order-card-items">${items}</div>
       <div class="order-card-total">${formatPrice(o.total)}</div>
       ${actions}
@@ -425,9 +431,17 @@ async function viewOrder(orderId) {
     paymentInfo = `<div style="margin-bottom:8px"><span class="status-badge status-na">NOT APPLICABLE</span></div>`;
   }
 
+  let typeLine='';
+  if(o.order_type==='dine-in') typeLine='<div style="font-size:11px;color:var(--gold);font-weight:600;letter-spacing:.5px">Dine In</div>';
+  else if(o.order_type==='takeaway') typeLine='<div style="font-size:11px;color:var(--gold);font-weight:600;letter-spacing:.5px">Takeaway</div>';
+  else if(o.order_type==='delivery'){
+    const region=o.delivery && o.delivery.region ? (o.delivery.region.name || o.delivery.region) : '';
+    typeLine='<div style="font-size:11px;color:var(--gold);font-weight:600;letter-spacing:.5px">Delivery'+(region?' — '+region:'')+'</div>';
+  }
   $('adminModalBox').innerHTML = `
     <h3>ORDER #${o.id}</h3>
     <div style="margin-bottom:8px"><strong>TABLE ${o.table}</strong></div>
+    ${typeLine}
     ${o.session_id ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Session: ' + o.session_id + '</div>' : ''}
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">ORDERED AT: ${o.time} · ${o.date}</div>
     <div style="margin-bottom:8px"><span class="status-badge status-${o.order_status.toLowerCase()}">${o.order_status}</span></div>

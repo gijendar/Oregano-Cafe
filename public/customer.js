@@ -12,6 +12,8 @@ let cart = [];
 let activeCategory = 0;
 let activeFilter = 'all';
 let cartIdCounter = 0;
+let currentOrderType = 'dine-in';
+let currentDeliveryRegion = null;
 
 // ===========================
 // API CONFIG
@@ -101,7 +103,8 @@ if(!isAdminPage){
     const v=Number(tableParam);
     if(Number.isInteger(v) && v>=1 && v<=TOTAL_TABLES){
       currentTable=v;
-      showMenu();
+      $('tableInput').value=v;
+      showOrderTypeSelector();
     } else {
       // Invalid table in URL - show error but don't proceed
       $('tableError').textContent = 'Please enter a table number between 1-' + TOTAL_TABLES + '.';
@@ -109,6 +112,13 @@ if(!isAdminPage){
     }
   }
   $('continueBtn').addEventListener('click',()=>{
+    const orderTypeSelected=currentOrderType && $('orderTypeSelect').style.display==='block';
+    if(orderTypeSelected){
+      // Order type + region already selected, proceed to menu
+      $('tableError').classList.remove('show');
+      showMenu();
+      return;
+    }
     const v=Number($('tableInput').value);
     if(!Number.isInteger(v) || v<1 || v>TOTAL_TABLES){
       $('tableError').textContent = 'Please enter a table number between 1-' + TOTAL_TABLES + '.';
@@ -117,12 +127,18 @@ if(!isAdminPage){
     }
     $('tableError').classList.remove('show');
     currentTable=v;
-    showMenu();
+    showOrderTypeSelector();
   });
+  // Show order type selector after table entered
+  function showOrderTypeSelector(){
+    $('orderTypeSelect').style.display='block';
+    $('continueBtn').textContent='CONTINUE';
+    buildRegionOptions();
+  }
   $('tableInput').addEventListener('keydown',e=>{ if(e.key==='Enter') $('continueBtn').click() });
   $('tableBadge').addEventListener('click',()=>{
-    if(confirm('Change table number?')){
-      currentTable=null; cart=[];
+    if(confirm('Change table number or order type?')){
+      currentTable=null; cart=[]; currentOrderType='dine-in'; currentDeliveryRegion=null;
       $('landing').classList.remove('hidden');
       $('mainContent').classList.remove('active');
       $('header').style.display='none';
@@ -130,6 +146,10 @@ if(!isAdminPage){
       $('floatingCart').classList.remove('show');
       $('tableInput').value='';
       $('tableInput').focus();
+      $('orderTypeSelect').style.display='none';
+      $('regionMap').style.display='none';
+      $('continueBtn').textContent='VIEW MENU';
+      $('tableError').classList.remove('show');
     }
   });
 })();
@@ -141,11 +161,62 @@ function showMenu(){
   $('mainContent').classList.add('active');
   $('header').style.display='flex';
   $('footer').style.display='block';
-  $('tableBadge').textContent='TABLE '+currentTable;
-  $('cartTableLabel').textContent='TABLE '+currentTable;
+  const typeLabel=currentOrderType==='dine-in'?'Dine In':currentOrderType==='takeaway'?'Takeaway':'Delivery';
+  $('tableBadge').textContent='TABLE '+currentTable+' · '+typeLabel;
+  $('cartTableLabel').textContent='TABLE '+currentTable+' · '+typeLabel;
+  if(currentOrderType==='delivery' && currentDeliveryRegion){
+    $('tableBadge').textContent+=' · '+currentDeliveryRegion.name;
+    $('cartTableLabel').textContent+=' · '+currentDeliveryRegion.name;
+  }
   buildCategories();
   buildMenu();
   updateCart();
+}
+
+// Order type selection
+function selectOrderType(btn){
+  document.querySelectorAll('.order-type-option').forEach(o=>o.classList.remove('active'));
+  btn.classList.add('active');
+  currentOrderType=btn.dataset.type;
+  const regionMap=$('regionMap');
+  if(currentOrderType==='delivery'){
+    regionMap.style.display='block';
+    if(!currentDeliveryRegion) selectRegion($('#regionOptions .region-option')[0]);
+  } else {
+    regionMap.style.display='none';
+    currentDeliveryRegion=null;
+  }
+}
+
+function buildRegionOptions(){
+  const regions=[
+    {name:'Central City',dist:'0-2 km'},
+    {name:'West End',dist:'2-4 km'},
+    {name:'East Side',dist:'2-5 km'},
+    {name:'North Park',dist:'1-3 km'},
+    {name:'South Bazaar',dist:'3-6 km'},
+    {name:'Old Town',dist:'1-4 km'},
+    {name:'University Area',dist:'0-3 km'},
+    {name:'Industrial Zone',dist:'4-8 km'}
+  ];
+  const container=$('regionOptions');
+  container.innerHTML='';
+  regions.forEach((r,i)=>{
+    const div=document.createElement('div');
+    div.className='region-option'+(i===0?' active':'');
+    div.innerHTML='<span class="region-option-name">'+r.name+'</span><span class="region-option-dist">'+r.dist+' · Free</span>';
+    div.onclick=()=>selectRegion(div);
+    container.appendChild(div);
+  });
+}
+
+function selectRegion(el){
+  document.querySelectorAll('.region-option').forEach(o=>o.classList.remove('active'));
+  el.classList.add('active');
+  currentDeliveryRegion={
+    name:el.querySelector('.region-option-name').textContent,
+    dist:el.querySelector('.region-option-dist').textContent
+  };
 }
 
 // ===========================
@@ -184,6 +255,79 @@ document.querySelectorAll('.filter-chip').forEach(chip=>{
 }
 
 // ===========================
+// MENU ICON HELPERS
+// ===========================
+function getItemIcon(item, cat){
+  if(item.icon) return item.icon;
+  const name=item.name.toLowerCase();
+  const catName=cat?cat.cat.toLowerCase():'';
+  // Pizza
+  if(name.includes('pizza')) return '🍕';
+  // Pasta
+  if(name.includes('pasta')||name.includes('penne')||name.includes('spaghetti')||name.includes('ravioli')||name.includes('gnocchi')) return '🍝';
+  // Burger
+  if(name.includes('burger')) return '🍔';
+  // Fries / wedges / chips
+  if(name.includes('fries')||name.includes('wedges')||name.includes('chips')) return '🍟';
+  // Momos
+  if(name.includes('momos')||name.includes('momos')) return '🥟';
+  // Rice / biryani
+  if(name.includes('rice')||name.includes('biryani')) return '🍚';
+  // Noodles
+  if(name.includes('noodle')) return '🍜';
+  // Soup
+  if(name.includes('soup')) return '🍲';
+  // Milkshake
+  if(name.includes('milkshake')) return '🥤';
+  // Coffee
+  if(name.includes('coffee')) return '☕';
+  // Tea
+  if(name.includes('tea')) return '🫖';
+  // Chocolate / hot chocolate
+  if(name.includes('chocolate')) return '🍫';
+  // Mocktail / cocktail-style
+  if(name.includes('mocktail')) return '🍹';
+  // Dessert / cake / brownie / sundae
+  if(name.includes('cake')||name.includes('brownie')||name.includes('sundae')||name.includes('waffle')||name.includes('dessert')) return '🍰';
+  // Cheesecake
+  if(name.includes('cheesecake')) return '🍰';
+  // Cheese-based
+  if(name.includes('cheese')) return '🧀';
+  // Bread / garlic bread / toast / bruschetta
+  if(name.includes('bread')||name.includes('toast')||name.includes('bruschetta')) return '🍞';
+  // Nachos
+  if(name.includes('nachos')||name.includes('nachos')) return '🫓';
+  // Bao
+  if(name.includes('bao')) return '🫓';
+  // Fondue
+  if(name.includes('fondue')) return '🫕';
+  // Soup / oriental / soups
+  if(name.includes('soup')) return '🍜';
+  // Chinese starters / gravy
+  if(name.includes('gravy')||name.includes('starter')) return '🥡';
+  // Dip
+  if(name.includes('dip')) return '🫙';
+  // Beverage / drink / coke / sprite / thums up / bisleri / water
+  if(name.includes('beverage')||name.includes('drink')||name.includes('coke')||name.includes('sprite')||name.includes('water')||name.includes('bisleri')||name.includes('thums up')) return '🥤';
+  // Shake / smoothie-type
+  if(name.includes('shake')) return '🥤';
+  // Desserts / ice cream
+  if(name.includes('ice cream')||name.includes('icecream')) return '🍦';
+  // Fruit / berry / mango / strawberry / blueberry
+  if(name.includes('berry')||name.includes('mango')||name.includes('strawberry')||name.includes('apple')) return '🍎';
+  // Oriental express
+  if(catName.includes('oriental')||catName.includes('soup')) return '🍜';
+  // Chinese
+  if(catName.includes('chinese')) return '🥡';
+  // Jak/Jain
+  if(catName.includes('jain')) return '🙏';
+  // Dessert
+  if(catName.includes('dessert')) return '🍰';
+  // Default food icon
+  return '🍽️';
+}
+
+// ===========================
 // MENU RENDERING
 // ===========================
 function buildMenu(){
@@ -200,12 +344,14 @@ function buildMenu(){
     if(activeFilter==='jain' && isJain) filteredItems=cat.items;
     if(activeFilter==='all') filteredItems=cat.items;
     if(filteredItems.length===0) return;
-    let html='<div class="menu-category-title"><span class="cat-icon">'+cat.icon+'</span> '+cat.cat+'</div>';
+    let html='<div class="menu-category-title"><span class="cat-icon">'+(cat.icon||'')+'</span> '+cat.cat+'</div>';
     if(cat.note) html+='<div class="menu-note">'+cat.note+'</div>';
     html+='<div class="menu-grid">';
     filteredItems.forEach((item, itemIdx)=>{
       const key=catIdx+'-'+itemIdx;
+      const itemIcon=getItemIcon(item,cat);
       html+='<div class="menu-card" data-key="'+key+'">';
+      html+='<div class="menu-card-icon">'+itemIcon+'</div>';
       html+='<img class="menu-card-img" src="'+item.img+'" alt="'+item.name+'" loading="lazy">';
       html+='<div class="menu-card-body">';
       html+='<div class="menu-card-name">'+item.name+'</div>';
@@ -427,7 +573,9 @@ async function placeOrder(){
   try {
     const orderData = {
       table: currentTable,
-      items: cart.map(c=>({name:c.name,price:c.price,qty:c.qty,options:c.options||[]}))
+      items: cart.map(c=>({name:c.name,price:c.price,qty:c.qty,options:c.options||[]})),
+      order_type: currentOrderType,
+      delivery: currentOrderType==='delivery' ? { region: currentDeliveryRegion } : null
     };
     let order;
     const apiResult = await apiCall('POST', '/orders', orderData);

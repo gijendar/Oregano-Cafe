@@ -59,6 +59,26 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
 .hero-input:focus{border-color:var(--gold);background:rgba(252,249,243,0.12);box-shadow:0 0 0 3px rgba(184,154,90,0.15)}
 .hero-error{color:#E8A838;font-size:12px;margin-top:8px;display:none;text-align:center}
 .hero-error.show{display:block}
+.order-type-select{border:1px solid var(--border);border-radius:var(--radius-md);background:rgba(252,249,243,0.6);backdrop-filter:blur(8px);padding:16px}
+.order-type-label{font-size:10px;font-weight:600;letter-spacing:2px;color:var(--charcoal);text-transform:uppercase;margin-bottom:12px;text-align:center}
+.order-type-options{display:flex;gap:8px}
+.order-type-option{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--ivory);cursor:pointer;transition:all .25s;text-align:center}
+.order-type-option:hover{border-color:var(--sage)}
+.order-type-option.active{border-color:var(--forest);background:var(--forest);color:var(--cream);box-shadow:0 2px 12px rgba(36,59,42,0.2)}
+.order-type-option.active .order-type-desc{color:rgba(247,241,243,0.7)}
+.order-type-icon{font-size:24px}
+.order-type-name{font-size:12px;font-weight:600;letter-spacing:.5px;text-transform:uppercase}
+.order-type-desc{font-size:10px;color:var(--muted)}
+.order-type-option.active .order-type-desc{color:rgba(247,241,243,0.7)}
+.region-map{border-top:1px solid var(--border);padding-top:16px}
+.region-map-label{font-size:10px;font-weight:600;letter-spacing:2px;color:var(--charcoal);text-transform:uppercase;margin-bottom:12px;text-align:center}
+.region-options{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-width:320px;margin:0 auto}
+@media(min-width:400px){.region-options{grid-template-columns:repeat(3,1fr)}}
+.region-option{padding:12px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--ivory);cursor:pointer;transition:all .2s;text-align:center;display:flex;flex-direction:column;gap:4px}
+.region-option:hover{border-color:var(--sage)}
+.region-option.active{border-color:var(--forest);background:var(--forest);color:var(--cream)}
+.region-option-name{font-size:11px;font-weight:600}
+.region-option-dist{font-size:9px;color:var(--gold);letter-spacing:1px}
 .btn-hero{width:100%;padding:18px 32px;background:var(--gold);color:var(--espresso);font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;border-radius:var(--radius-md);transition:all .3s;margin-top:16px}
 .btn-hero:hover{background:var(--gold-light);transform:translateY(-2px);box-shadow:0 8px 30px rgba(184,154,90,0.3)}
 .hero-admin-link{margin-top:32px;opacity:0;animation:fadeUp .8s 1s forwards;text-align:center}
@@ -103,6 +123,7 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
 /* MENU CARDS */
 .menu-card{background:rgba(252,249,243,0.65);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:var(--radius-lg);overflow:hidden;transition:all .4s cubic-bezier(.4,0,.2,1);position:relative;box-shadow:0 4px 24px rgba(43,33,27,0.08);border:1px solid rgba(255,255,255,0.35)}.menu-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--forest),var(--gold),var(--forest));opacity:0;transition:opacity .4s;z-index:1;border-radius:var(--radius-lg) var(--radius-lg) 0 0}.menu-card:hover::before{opacity:1}
 .menu-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}
+.menu-card-icon{position:absolute;top:14px;left:14px;font-size:32px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:rgba(252,249,243,0.7);backdrop-filter:blur(4px);border-radius:12px;box-shadow:0 2px 8px rgba(43,33,27,0.1);z-index:2}
 .menu-card-img{width:100%;height:200px;object-fit:cover;background:var(--beige);transition:transform .6s cubic-bezier(.4,0,.2,1)}
 .menu-card:hover .menu-card-img{transform:scale(1.05)}
 .menu-card-img-wrap{overflow:hidden;position:relative}
@@ -422,9 +443,33 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
     <div class="hero-divider"></div>
     <div class="hero-form">
       <label>Enter Your Table Number</label>
-      <input type="number" class="hero-input" id="tableInput" placeholder="e.g. 05" min="1" max="100" inputmode="numeric">
-      <p class="hero-error" id="tableError">Please enter your table number to continue.</p>
-      <button class="btn-hero" id="continueBtn">VIEW MENU</button>
+      <input type="number" class="hero-input" id="tableInput" placeholder="e.g. 05" min="1" max="20" inputmode="numeric">
+      <p class="hero-error" id="tableError"></p>
+      <div class="order-type-select" id="orderTypeSelect" style="display:none;margin-top:16px">
+        <div class="order-type-label">How would you like to order?</div>
+        <div class="order-type-options">
+          <button class="order-type-option active" data-type="dine-in" onclick="selectOrderType(this)">
+            <span class="order-type-icon">🍽️</span>
+            <span class="order-type-name">Dine In</span>
+            <span class="order-type-desc">Eat at the cafe</span>
+          </button>
+          <button class="order-type-option" data-type="takeaway" onclick="selectOrderType(this)">
+            <span class="order-type-icon">🛍️</span>
+            <span class="order-type-name">Takeaway</span>
+            <span class="order-type-desc">Pick up your order</span>
+          </button>
+          <button class="order-type-option" data-type="delivery" onclick="selectOrderType(this)">
+            <span class="order-type-icon">🚚</span>
+            <span class="order-type-name">Delivery</span>
+            <span class="order-type-desc">We deliver to you</span>
+          </button>
+        </div>
+        <div class="region-map" id="regionMap" style="display:none;margin-top:16px">
+          <div class="region-map-label">Select your region</div>
+          <div class="region-options" id="regionOptions"></div>
+        </div>
+      </div>
+      <button class="btn-hero" id="continueBtn" style="margin-top:16px">VIEW MENU</button>
     </div>
     <div class="hero-admin-link"><a href="#admin">🔒 Admin Portal</a></div>
   </div>
@@ -838,6 +883,28 @@ const MENU=[
 {name:"Thums Up 500 ml",price:50,img:"https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&h=300&fit=crop"},
 {name:"Sprite 500 ml",price:50,img:"https://images.unsplash.com/photo-1625772299848-391e67f70714?w=400&h=300&fit=crop"},
 {name:"Diet Coke",price:60,img:"https://images.unsplash.com/photo-1581006852262-e4307cf6283a?w=400&h=300&fit=crop"}
+]},
+{cat:"Employee Meal Deals",icon:"👨‍🍳",items:[
+{name:"Staff Meal — Daily Special",price:99,img:"https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",icon:"🍛"},
+{name:"Staff Meal — Biryani Combo",price:129,img:"https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&h=300&fit=crop",icon:"🍛"},
+{name:"Staff Meal — Pasta Combo",price:119,img:"https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?w=400&h=300&fit=crop",icon:"🍝"},
+{name:"Staff Meal — Burger Combo",price:109,img:"https://images.unsplash.com/photo-1585238342024-78d387f4132e?w=400&h=300&fit=crop",icon:"🍔"},
+{name:"Staff Meal — Fried Rice Combo",price:109,img:"https://images.unsplash.com/photo-1623238912680-125f25cc6f3d?w=400&h=300&fit=crop",icon:"🍚"},
+{name:"Staff Meal — Noodles Combo",price:99,img:"https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=400&h=300&fit=crop",icon:"🍜"},
+{name:"Staff Meal — Soup & Bread",price:89,img:"https://images.unsplash.com/photo-1547592166-23ac45744acd?w=400&h=300&fit=crop",icon:"🍲"},
+{name:"Staff Meal — Thali Plate",price:149,img:"https://images.unsplash.com/photo-1517248135424-416986b5b2a3?w=400&h=300&fit=crop",icon:"🍽️"}
+]},
+{cat:"Director's Table",icon:"🎩",items:[
+{name:"Director's Tasting Platter",price:1490,img:"https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=400&h=300&fit=crop",icon:"🍽️"},
+{name:"Director's Signature Pizza",price:590,img:"https://images.unsplash.com/photo-1574071318508-1cdbab80d002?w=400&h=300&fit=crop",icon:"🍕"},
+{name:"Director's Truffle Pasta",price:620,img:"https://images.unsplash.com/photo-1645112411341-6c4fd023714a?w=400&h=300&fit=crop",icon:"🍝"},
+{name:"Director's Premium Burger",price:450,img:"https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&h=300&fit=crop",icon:"🍔"},
+{name:"Director's Golden Fried Rice",price:420,img:"https://images.unsplash.com/photo-1623238912680-125f25cc6f3d?w=400&h=300&fit=crop",icon:"🍚"},
+{name:"Director's Special Biryani",price:490,img:"https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&h=300&fit=crop",icon:"🍛"},
+{name:"Director's Cheesecake Delight",price:320,img:"https://images.unsplash.com/photo-1533134242443-d4fd215305ad?w=400&h=300&fit=crop",icon:"🍰"},
+{name:"Director's Signature Mocktail",price:280,img:"https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&h=300&fit=crop",icon:"🍹"},
+{name:"Director's Premium Waffle",price:390,img:"https://images.unsplash.com/photo-1562376552-0d160a2f238d?w=400&h=300&fit=crop",icon:"🧇"},
+{name:"Director's Chocolate Lava Cake",price:280,img:"https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=400&h=300&fit=crop",icon:"🍫"}
 ]},
 {cat:"JAIN MENU",icon:"🙏",items:[
 {name:"Jain Jalapeno Cheese Poppers",price:310,img:"https://images.unsplash.com/photo-1574484284002-952d92456975?w=400&h=300&fit=crop&q=85"},

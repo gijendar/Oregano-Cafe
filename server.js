@@ -52,6 +52,10 @@ const db = {
   payments: []
 };
 
+// Extra order metadata (order_type, delivery) stored separately
+// so it survives even when Supabase columns are not yet added.
+const orderMeta = new Map();
+
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -290,11 +294,21 @@ app.get('/api/orders', authMiddleware, async (req, res) => {
 
       const { data: orders, error } = await query.order('timestamp', { ascending: false });
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(orders || []);
+      // Merge extra metadata (order_type, delivery) from in-memory cache
+      const enriched = (orders || []).map(o => {
+        const meta = orderMeta.get(o.id);
+        if (meta) return { ...o, ...meta };
+        return o;
+      });
+      return res.json(enriched);
     }
 
     // Fallback: in-memory
-    let orders = [...db.orders];
+    let orders = [...db.orders].map(o => {
+      const meta = orderMeta.get(o.id);
+      if (meta) return { ...o, ...meta };
+      return o;
+    });
     if (status && status !== 'ALL') orders = orders.filter(o => o.order_status === status);
     if (payment_status) orders = orders.filter(o => o.payment_status === payment_status);
     if (table) orders = orders.filter(o => o.table === Number(table));
@@ -316,18 +330,20 @@ app.get('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   if (USE_DB) {
     const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    return res.json(order);
+    const meta = orderMeta.get(order.id);
+    return res.json(meta ? { ...order, ...meta } : order);
   }
   const order = db.orders.find(o => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
-  res.json(order);
+  const meta = orderMeta.get(order.id);
+  res.json(meta ? { ...order, ...meta } : order);
 }));
 
 // Create order (customer-facing)
 const TOTAL_TABLES = 20;
 
 app.post('/api/orders', asyncWrap(async (req, res) => {
-  const { table, items } = req.body;
+  const { table, items, order_type, delivery } = req.body;
   if (!table || !items || items.length === 0) {
     return res.status(400).json({ error: 'Table and items are required' });
   }
@@ -362,6 +378,8 @@ app.post('/api/orders', asyncWrap(async (req, res) => {
     order_status: 'PENDING',
     payment_status: 'UNPAID',
     payment_method: null,
+    order_type: order_type || 'dine-in',
+    delivery: delivery || null,
     date: ds.substring(0, 4) + '-' + ds.substring(4, 6) + '-' + ds.substring(6, 8),
     time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
     timestamp: now.toISOString(),
@@ -370,14 +388,22 @@ app.post('/api/orders', asyncWrap(async (req, res) => {
     paid_at: null
   };
 
+  // Store metadata separately for retrieval even if Supabase columns missing
+  orderMeta.set(orderId, { order_type: order.order_type, delivery: order.delivery });
+
   if (USE_DB) {
     const { error } = await supabase.from('orders').insert(order);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      // If columns are missing, insert without order_type/delivery
+      const fallbackOrder = { ...order, order_type: undefined, delivery: undefined };
+      const { error: retryError } = await supabase.from('orders').insert(fallbackOrder);
+      if (retryError) return res.status(500).json({ error: retryError.message });
+    }
   } else {
     db.orders.push(order);
   }
 
-  console.log(`[NEW ORDER] ${orderId} - Table ${table} - ₹${order.total} - Session ${session.id}`);
+  console.log(`[NEW ORDER] ${orderId} - Table ${table} - ₹${order.total} - Session ${session.id}${order_type ? ' ['+order_type+']' : ''}`);
   broadcastSSE('new_order', order);
   res.json({ success: true, order });
 }));
@@ -415,8 +441,9 @@ app.patch('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
       broadcastSSE('order_cancelled', order);
     }
 
+    const meta = orderMeta.get(order.id);
     console.log(`[ORDER ${action.toUpperCase()}] ${order.id} - Table ${order.table}`);
-    return res.json({ success: true, order });
+    return res.json({ success: true, order: meta ? { ...order, ...meta } : order });
   }
 
   // Fallback: in-memory
@@ -427,13 +454,13 @@ app.patch('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
     order.order_status = 'COMPLETED';
     order.completed_at = now.toISOString();
     await recalcSessionTotal(order.session_id);
-    broadcastSSE('order_completed', { order, session_total: db.table_sessions.find(s => s.id === order.session_id)?.total_amount || 0 });
+    broadcastSSE('order_completed', { order: { ...order, ...(orderMeta.get(order.id) || {}) }, session_total: db.table_sessions.find(s => s.id === order.session_id)?.total_amount || 0 });
   } else if (action === 'cancel') {
     order.order_status = 'CANCELLED';
     order.payment_status = 'NOT_APPLICABLE';
     order.cancelled_at = now.toISOString();
     await recalcSessionTotal(order.session_id);
-    broadcastSSE('order_cancelled', order);
+    broadcastSSE('order_cancelled', { ...order, ...(orderMeta.get(order.id) || {}) });
   }
 
   console.log(`[ORDER ${action.toUpperCase()}] ${order.id} - Table ${order.table}`);

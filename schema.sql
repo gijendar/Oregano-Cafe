@@ -79,3 +79,7 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 CREATE INDEX idx_payments_session ON payments(session_id);
+
+-- ORDER TYPE and DELIVERY columns (for Dine In / Takeaway / Delivery + region)
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_type TEXT DEFAULT 'dine-in' CHECK (order_type IN ('dine-in', 'takeaway', 'delivery'));
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery JSONB DEFAULT NULL;
