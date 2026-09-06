@@ -41,6 +41,19 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname))); // fallback for root files during local dev
 
+// Async error wrapper — Express 4 does NOT catch async route handler errors
+function asyncWrap(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+// Global error handler — safety net for any uncaught error
+app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err.message || err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Server error. Please try again.' });
+  }
+});
+
 // Auth middleware
 function authMiddleware(req, res, next) {
   const token = req.headers['x-admin-token'];
@@ -88,22 +101,33 @@ app.get('/api/db-status', (req, res) => {
 // AUTH ROUTES
 // ===========================
 app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  if (USE_DB) {
-    const { data: admin } = await supabase
-      .from('admins')
-      .select('*')
-      .eq('username', username)
-      .eq('password', password)
-      .single();
+    if (USE_DB) {
+      const { data: admin, error } = await supabase
+        .from('admins')
+        .select('*')
+        .eq('username', username)
+        .eq('password', password)
+        .single();
 
-    if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
-    res.json({ success: true, token: 'admin-session-token', name: admin.name });
-  } else {
-    const admin = db.admins.find(a => a.username === username && a.password === password);
-    if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
-    res.json({ success: true, token: 'admin-session-token', name: admin.name });
+      if (error) {
+        console.error('Login Supabase error:', error.message);
+        return res.status(500).json({ error: 'Database error. Please try again.' });
+      }
+      if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
+      res.json({ success: true, token: 'admin-session-token', name: admin.name });
+    } else {
+      const admin = db.admins.find(a => a.username === username && a.password === password);
+      if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
+      res.json({ success: true, token: 'admin-session-token', name: admin.name });
+    }
+  } catch (e) {
+    console.error('Login route error:', e.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Server error. Please try again.' });
+    }
   }
 });
 
@@ -211,49 +235,54 @@ async function generateOrderId() {
 
 // Get all orders (admin)
 app.get('/api/orders', authMiddleware, async (req, res) => {
-  const { status, table, date, search, payment_status } = req.query;
+  try {
+    const { status, table, date, search, payment_status } = req.query;
 
-  if (USE_DB) {
-    let query = supabase.from('orders').select('*');
+    if (USE_DB) {
+      let query = supabase.from('orders').select('*');
 
-    if (status && status !== 'ALL') {
-      query = query.eq('order_status', status);
+      if (status && status !== 'ALL') {
+        query = query.eq('order_status', status);
+      }
+      if (payment_status) {
+        query = query.eq('payment_status', payment_status);
+      }
+      if (table) {
+        query = query.eq('"table"', Number(table));
+      }
+      if (date) {
+        query = query.eq('date', date);
+      }
+      if (search) {
+        const q = search.toLowerCase();
+        query = query.or(`id.ilike.%${q}%,table.eq.${Number(table) || -1}`);
+      }
+
+      const { data: orders, error } = await query.order('timestamp', { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(orders || []);
     }
-    if (payment_status) {
-      query = query.eq('payment_status', payment_status);
-    }
-    if (table) {
-      query = query.eq('"table"', Number(table));
-    }
-    if (date) {
-      query = query.eq('date', date);
-    }
+
+    // Fallback: in-memory
+    let orders = [...db.orders];
+    if (status && status !== 'ALL') orders = orders.filter(o => o.order_status === status);
+    if (payment_status) orders = orders.filter(o => o.payment_status === payment_status);
+    if (table) orders = orders.filter(o => o.table === Number(table));
+    if (date) orders = orders.filter(o => o.date === date);
     if (search) {
       const q = search.toLowerCase();
-      query = query.or(`id.ilike.%${q}%,table.eq.${Number(table) || -1}`);
+      orders = orders.filter(o => o.id.toLowerCase().includes(q) || ('' + o.table).includes(q));
     }
-
-    const { data: orders, error } = await query.order('timestamp', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json(orders || []);
+    orders.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    res.json(orders);
+  } catch (e) {
+    console.error('GET /api/orders error:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to load orders.' });
   }
-
-  // Fallback: in-memory
-  let orders = [...db.orders];
-  if (status && status !== 'ALL') orders = orders.filter(o => o.order_status === status);
-  if (payment_status) orders = orders.filter(o => o.payment_status === payment_status);
-  if (table) orders = orders.filter(o => o.table === Number(table));
-  if (date) orders = orders.filter(o => o.date === date);
-  if (search) {
-    const q = search.toLowerCase();
-    orders = orders.filter(o => o.id.toLowerCase().includes(q) || ('' + o.table).includes(q));
-  }
-  orders.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  res.json(orders);
 });
 
 // Get single order
-app.get('/api/orders/:id', authMiddleware, async (req, res) => {
+app.get('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   if (USE_DB) {
     const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -262,10 +291,10 @@ app.get('/api/orders/:id', authMiddleware, async (req, res) => {
   const order = db.orders.find(o => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
-});
+}));
 
 // Create order (customer-facing)
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', asyncWrap(async (req, res) => {
   const { table, items } = req.body;
   if (!table || !items || items.length === 0) {
     return res.status(400).json({ error: 'Table and items are required' });
@@ -314,10 +343,10 @@ app.post('/api/orders', async (req, res) => {
   console.log(`[NEW ORDER] ${orderId} - Table ${table} - ₹${order.total} - Session ${session.id}`);
   broadcastSSE('new_order', order);
   res.json({ success: true, order });
-});
+}));
 
 // Update order status (complete / cancel)
-app.patch('/api/orders/:id', authMiddleware, async (req, res) => {
+app.patch('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   const { action } = req.body;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -372,10 +401,10 @@ app.patch('/api/orders/:id', authMiddleware, async (req, res) => {
 
   console.log(`[ORDER ${action.toUpperCase()}] ${order.id} - Table ${order.table}`);
   res.json({ success: true, order });
-});
+}));
 
 // Permanently delete order
-app.delete('/api/orders/:id', authMiddleware, async (req, res) => {
+app.delete('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   if (USE_DB) {
     const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -400,14 +429,14 @@ app.delete('/api/orders/:id', authMiddleware, async (req, res) => {
   console.log(`[ORDER DELETED] ${order.id} - Table ${order.table}`);
   broadcastSSE('order_deleted', { orderId: order.id, table: order.table });
   res.json({ success: true });
-});
+}));
 
 // ===========================
 // TABLE SESSION ROUTES
 // ===========================
 
 // Get all tables with session info
-app.get('/api/tables', authMiddleware, async (req, res) => {
+app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
   const tables = [];
 
   if (USE_DB) {
@@ -477,10 +506,10 @@ app.get('/api/tables', authMiddleware, async (req, res) => {
     });
   }
   res.json(tables);
-});
+}));
 
 // Get table bill detail
-app.get('/api/tables/:number/bill', authMiddleware, async (req, res) => {
+app.get('/api/tables/:number/bill', authMiddleware, asyncWrap(async (req, res) => {
   const tableNum = Number(req.params.number);
   const session = await getActiveSession(tableNum);
   if (!session) return res.json({ session: null, orders: [], total: 0 });
@@ -500,10 +529,10 @@ app.get('/api/tables/:number/bill', authMiddleware, async (req, res) => {
   const orders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
   const total = orders.reduce((sum, o) => sum + o.total, 0);
   res.json({ session, orders, total });
-});
+}));
 
 // Settle table bill (payment)
-app.post('/api/tables/:number/pay', authMiddleware, async (req, res) => {
+app.post('/api/tables/:number/pay', authMiddleware, asyncWrap(async (req, res) => {
   const tableNum = Number(req.params.number);
   const { payment_method } = req.body;
 
@@ -599,12 +628,12 @@ app.post('/api/tables/:number/pay', authMiddleware, async (req, res) => {
   console.log(`[TABLE PAID] Table ${tableNum} - ₹${totalAmount} - ${payment_method} - Session ${session.id}`);
   broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: totalAmount, payment_method });
   res.json({ success: true, payment, session });
-});
+}));
 
 // ===========================
 // PAYMENTS / EARNINGS
 // ===========================
-app.get('/api/earnings', authMiddleware, async (req, res) => {
+app.get('/api/earnings', authMiddleware, asyncWrap(async (req, res) => {
   const { date } = req.query;
   const targetDate = date || new Date().toISOString().split('T')[0];
 
@@ -659,12 +688,12 @@ app.get('/api/earnings', authMiddleware, async (req, res) => {
     cashCount: cashOrders.length,
     onlineCount: onlineOrders.length
   });
-});
+}));
 
 // ===========================
 // EXPENSE ROUTES
 // ===========================
-app.get('/api/expenses', authMiddleware, async (req, res) => {
+app.get('/api/expenses', authMiddleware, asyncWrap(async (req, res) => {
   const { date } = req.query;
 
   if (USE_DB) {
@@ -678,9 +707,9 @@ app.get('/api/expenses', authMiddleware, async (req, res) => {
   if (date) expenses = expenses.filter(e => e.date === date);
   expenses.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   res.json(expenses);
-});
+}));
 
-app.post('/api/expenses', authMiddleware, async (req, res) => {
+app.post('/api/expenses', authMiddleware, asyncWrap(async (req, res) => {
   const { name, amount, note, date } = req.body;
   if (!name || !amount || !date) return res.status(400).json({ error: 'Name, amount, and date are required' });
 
@@ -702,9 +731,9 @@ app.post('/api/expenses', authMiddleware, async (req, res) => {
 
   console.log(`[EXPENSE] ${name} - ₹${amount} on ${date}`);
   res.json({ success: true, expense });
-});
+}));
 
-app.put('/api/expenses/:id', authMiddleware, async (req, res) => {
+app.put('/api/expenses/:id', authMiddleware, asyncWrap(async (req, res) => {
   const { name, amount, note, date } = req.body;
 
   if (USE_DB) {
@@ -725,9 +754,9 @@ app.put('/api/expenses/:id', authMiddleware, async (req, res) => {
   if (note !== undefined) expense.note = note;
   if (date) expense.date = date;
   res.json({ success: true, expense });
-});
+}));
 
-app.delete('/api/expenses/:id', authMiddleware, async (req, res) => {
+app.delete('/api/expenses/:id', authMiddleware, asyncWrap(async (req, res) => {
   if (USE_DB) {
     const { error } = await supabase.from('expenses').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
@@ -738,12 +767,12 @@ app.delete('/api/expenses/:id', authMiddleware, async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Expense not found' });
   db.expenses.splice(idx, 1);
   res.json({ success: true });
-});
+}));
 
 // ===========================
 // FINANCIAL REPORTS
 // ===========================
-app.get('/api/reports', authMiddleware, async (req, res) => {
+app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'From and to dates required' });
 
@@ -810,12 +839,12 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
     orders: orders.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)),
     expenses: expenses.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
   });
-});
+}));
 
 // ===========================
 // DASHBOARD STATS
 // ===========================
-app.get('/api/dashboard', authMiddleware, async (req, res) => {
+app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
   if (USE_DB) {
@@ -873,12 +902,12 @@ app.get('/api/dashboard', authMiddleware, async (req, res) => {
     activeTables: db.table_sessions.filter(s => s.status === 'ACTIVE').map(s => s.table),
     recentPending: pending.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 10)
   });
-});
+}));
 
 // ===========================
 // HEALTH CHECK
 // ===========================
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', asyncWrap(async (req, res) => {
   if (USE_DB) {
     const { count: orders } = await supabase.from('orders').select('*', { count: 'exact', head: true });
     const { count: expenses } = await supabase.from('expenses').select('*', { count: 'exact', head: true });
@@ -887,7 +916,7 @@ app.get('/api/health', async (req, res) => {
     return res.json({ status: 'ok', database: 'supabase', orders: orders || 0, expenses: expenses || 0, sessions: sessions || 0, payments: payments || 0 });
   }
   res.json({ status: 'ok', database: 'in-memory', orders: db.orders.length, expenses: db.expenses.length, sessions: db.table_sessions.length, payments: db.payments.length });
-});
+}));
 
 // ===========================
 // STATIC JS FILES — served explicitly for Vercel compatibility
