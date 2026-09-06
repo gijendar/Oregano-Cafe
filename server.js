@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 // ===========================
 // SUPABASE DATABASE
@@ -63,19 +63,14 @@ function authMiddleware(req, res, next) {
 }
 
 // ===========================
-// SSE ENDPOINT
-// On Vercel serverless: SSE connections hang and cause 504s.
-// Admin frontend uses SSE only (no polling fallback).
+// SSE ENDPOINT (Server-Sent Events for realtime updates)
 // ===========================
 app.get('/api/events', (req, res) => {
   // EventSource cannot send custom headers, so the token arrives as a query param.
   const token = req.headers['x-admin-token'] || req.query.token;
   if (token !== 'admin-session-token') return res.status(401).json({ error: 'Invalid token' });
 
-  if (process.env.VERCEL) {
-    // Vercel serverless: SSE not supported, client falls back to manual refresh
-    return res.json({ mode: 'poll', message: 'SSE not available on Vercel' });
-  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -905,21 +900,14 @@ app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
 }));
 
 // ===========================
-// HEALTH CHECK
+// HEALTH CHECK (lightweight — no database writes)
 // ===========================
-app.get('/api/health', asyncWrap(async (req, res) => {
-  if (USE_DB) {
-    const { count: orders } = await supabase.from('orders').select('*', { count: 'exact', head: true });
-    const { count: expenses } = await supabase.from('expenses').select('*', { count: 'exact', head: true });
-    const { count: sessions } = await supabase.from('table_sessions').select('*', { count: 'exact', head: true });
-    const { count: payments } = await supabase.from('payments').select('*', { count: 'exact', head: true });
-    return res.json({ status: 'ok', database: 'supabase', orders: orders || 0, expenses: expenses || 0, sessions: sessions || 0, payments: payments || 0 });
-  }
-  res.json({ status: 'ok', database: 'in-memory', orders: db.orders.length, expenses: db.expenses.length, sessions: db.table_sessions.length, payments: db.payments.length });
-}));
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
 // ===========================
-// STATIC JS FILES — served explicitly for Vercel compatibility
+// STATIC JS FILES — served for customer/admin scripts
 // ===========================
 app.get('/customer.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
@@ -931,24 +919,20 @@ app.get('/admin.js', (req, res) => {
 });
 
 // ===========================
-// CATCH-ALL (only for local dev, not Vercel)
+// CATCH-ALL — serve index.html for SPA routes
 // ===========================
-if (!process.env.VERCEL) {
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-  });
-}
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
-// Export for Vercel serverless
+// Export for potential use as middleware
 module.exports = app;
 
-// Start server (only when running locally, not on Vercel)
-if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`\n🍕 THE OREGANO CAFE — Server running on http://localhost:${PORT}`);
-    console.log(`📋 Customer: http://localhost:${PORT}`);
-    console.log(`🔒 Admin: http://localhost:${PORT}#admin`);
-    console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
-    console.log(`💾 Database: ${USE_DB ? 'Supabase (PostgreSQL)' : 'In-Memory (local dev)'}\n`);
-  });
-}
+// Start server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🍕 THE OREGANO CAFE — Server running on http://0.0.0.0:${PORT}`);
+  console.log(`📋 Customer: http://0.0.0.0:${PORT}`);
+  console.log(`🔒 Admin: http://0.0.0.0:${PORT}#admin`);
+  console.log(`📊 API Health: http://0.0.0.0:${PORT}/health`);
+  console.log(`💾 Database: ${USE_DB ? 'Supabase (PostgreSQL)' : 'In-Memory (local dev)'}\n`);
+});
