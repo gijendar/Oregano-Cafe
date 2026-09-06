@@ -31,7 +31,7 @@ function connectSSE() {
   }
   sseSource.addEventListener('new_order', e => {
     showToast('🔔 New order received!');
-    if (currentAdminSection === 'dashboard' || currentAdminSection === 'pending')
+    if (currentAdminSection === 'dashboard' || currentAdminSection === 'pending' || currentAdminSection === 'tables')
       renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('order_completed', e => {
