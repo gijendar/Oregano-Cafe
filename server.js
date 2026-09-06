@@ -546,7 +546,12 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
         total_orders: allOrders.length,
         status: isOccupied ? 'OCCUPIED' : 'AVAILABLE'
       });
+      if (isOccupied) {
+        console.log(`[TABLE STATE] Table ${i} = OCCUPIED (session: ${!!session}, hasActiveOrders: ${hasActiveOrders}, orderCount: ${allOrders.length})`);
+      }
     }
+    const occupiedTables = tables.filter(t => t.status === 'OCCUPIED');
+    console.log(`[TABLE STATE] Total occupied tables: ${occupiedTables.length}, occupied table numbers: ${occupiedTables.map(t => t.number).join(', ')}`);
     return res.json(tables);
   }
 

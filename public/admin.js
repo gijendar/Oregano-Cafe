@@ -31,8 +31,11 @@ function connectSSE() {
   }
   sseSource.addEventListener('new_order', e => {
     showToast('🔔 New order received!');
-    if (currentAdminSection === 'dashboard' || currentAdminSection === 'pending' || currentAdminSection === 'tables')
+    console.log('[REALTIME] new_order received, current section:', currentAdminSection);
+    if (currentAdminSection === 'dashboard' || currentAdminSection === 'pending' || currentAdminSection === 'tables') {
+      console.log('[REALTIME] refreshing', currentAdminSection, 'section');
       renderAdminSection(currentAdminSection).catch(() => {});
+    }
   });
   sseSource.addEventListener('order_completed', e => {
     if (currentAdminSection !== 'tables') renderAdminSection(currentAdminSection).catch(() => {});
@@ -307,6 +310,7 @@ function renderDashboard(el, orders, expenses, tables) {
   const totalTables = 20;
   const occupiedTables = (tables || []).filter(t => t.status === 'OCCUPIED').length;
   const availableTables = totalTables - occupiedTables;
+  console.log('[DASHBOARD] occupiedTables:', occupiedTables, 'availableTables:', availableTables);
 
   el.innerHTML = `
     <div class="stat-cards">
@@ -553,6 +557,8 @@ async function renderTables(el, orders) {
   console.log('[TABLES] apiCall result:', result ? 'success' : 'null/undefined');
   const tables = result || [];
   console.log('[TABLES] tables array length:', tables.length);
+  const occupied = tables.filter(t => t.status === 'OCCUPIED').map(t => t.number);
+  console.log('[TABLES] occupied tables:', occupied);
 
   let html = '<div class="stat-cards">';
   tables.forEach(t => {
