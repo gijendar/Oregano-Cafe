@@ -530,6 +530,12 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
         pendingOrders = allOrders.filter(o => o.order_status === 'PENDING').length;
       }
 
+      // Table is OCCUPIED if:
+      // 1. Has active session, OR
+      // 2. Has any non-cancelled orders (PENDING or COMPLETED)
+      const hasActiveOrders = allOrders.some(o => o.order_status !== 'CANCELLED');
+      const isOccupied = !!session || hasActiveOrders;
+
       tables.push({
         number: i,
         has_active_session: !!session,
@@ -538,9 +544,7 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
         unpaid_count: unpaidOrders.length,
         pending_count: pendingOrders,
         total_orders: allOrders.length,
-        // OCCUPIED if there's an active session (regardless of unpaid bill)
-        // AVAILABLE only when no active session
-        status: session ? 'OCCUPIED' : 'AVAILABLE'
+        status: isOccupied ? 'OCCUPIED' : 'AVAILABLE'
       });
     }
     return res.json(tables);
@@ -561,6 +565,12 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
       pendingOrders = allSessionOrders.filter(o => o.order_status === 'PENDING').length;
     }
 
+    // Table is OCCUPIED if:
+    // 1. Has active session, OR
+    // 2. Has any non-cancelled orders (PENDING or COMPLETED)
+    const hasActiveOrders = allSessionOrders.some(o => o.order_status !== 'CANCELLED');
+    const isOccupied = !!session || hasActiveOrders;
+
     tables.push({
       number: i,
       has_active_session: !!session,
@@ -569,8 +579,7 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
       unpaid_count: unpaidOrders.length,
       pending_count: pendingOrders,
       total_orders: allSessionOrders.length,
-      // OCCUPIED if there's an active session, AVAILABLE otherwise
-      status: session ? 'OCCUPIED' : 'AVAILABLE'
+      status: isOccupied ? 'OCCUPIED' : 'AVAILABLE'
     });
   }
   res.json(tables);
