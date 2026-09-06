@@ -378,6 +378,7 @@ function orderCardHTML(o) {
       <div class="order-card-actions">
         <span class="status-badge status-cancelled">CANCELLED</span>
         ${paymentInfo}
+        <button class="btn-remove" onclick="confirmDeleteOrder('${o.id}')">REMOVE ORDER</button>
       </div>
     `;
   }
@@ -478,7 +479,8 @@ async function doAction(orderId, action) {
 function confirmDeleteOrder(orderId) {
   $('adminConfirmBox').innerHTML = `
     <h3>Remove this order permanently?</h3>
-    <p><strong>Warning:</strong> This will permanently delete this order and its associated records from the database and remove its effect from all calculations.</p>
+    <p><strong>Warning:</strong> This action cannot be undone.</p>
+    <p>This will permanently delete this order and its associated records from the database.</p>
     <p style="font-size:12px;color:var(--cancelled-red)"><strong>${orderId}</strong></p>
     <div class="confirm-admin-actions">
       <button class="btn-cancel-modal" onclick="$('adminConfirm').classList.remove('active')">CANCEL</button>
@@ -491,8 +493,12 @@ function confirmDeleteOrder(orderId) {
 async function permanentlyDeleteOrder(orderId) {
   const result = await apiCall('DELETE', '/orders/' + orderId);
   $('adminConfirm').classList.remove('active');
-  showToast('✓ Order permanently deleted');
-  renderAdminSection(currentAdminSection);
+  if (result && result.success) {
+    showToast('✓ Order removed successfully');
+    renderAdminSection(currentAdminSection);
+  } else {
+    showToast('Error removing order. Please try again.');
+  }
 }
 
 // ===========================

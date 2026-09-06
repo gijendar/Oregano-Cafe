@@ -439,7 +439,8 @@ app.delete('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
     const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    if (order.session_id && order.order_status === 'COMPLETED' && order.payment_status === 'UNPAID') {
+    // Recalculate session total for COMPLETED/UNPAID or CANCELLED orders
+    if (order.session_id && (order.order_status === 'COMPLETED' && order.payment_status === 'UNPAID' || order.order_status === 'CANCELLED')) {
       await recalcSessionTotal(order.session_id);
     }
 
@@ -452,7 +453,7 @@ app.delete('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   const idx = db.orders.findIndex(o => o.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Order not found' });
   const order = db.orders[idx];
-  if (order.session_id && order.order_status === 'COMPLETED' && order.payment_status === 'UNPAID') {
+  if (order.session_id && (order.order_status === 'COMPLETED' && order.payment_status === 'UNPAID' || order.order_status === 'CANCELLED')) {
     await recalcSessionTotal(order.session_id);
   }
   db.orders.splice(idx, 1);
