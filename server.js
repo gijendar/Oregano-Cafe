@@ -100,15 +100,34 @@ app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
 
     if (USE_DB) {
+      // First, count matching records to diagnose .single() issues
+      const { count: matchCount, error: countError } = await supabase
+        .from('admins')
+        .select('*', { count: 'exact', head: true })
+        .eq('username', username)
+        .eq('password', password);
+
+      if (countError) {
+        console.error('Login count error:', countError.message, 'code:', countError.code);
+        return res.status(500).json({ error: 'Database error. Please try again.' });
+      }
+
+      console.log(`[LOGIN ATTEMPT] username lookup: ${username}, matching rows: ${matchCount || 0}`);
+
+      if (matchCount > 1) {
+        console.error('[LOGIN ERROR] Multiple admin records match credentials. Expected 0 or 1, got:', matchCount);
+        return res.status(500).json({ error: 'Database inconsistency detected. Please contact admin.' });
+      }
+
       const { data: admin, error } = await supabase
         .from('admins')
         .select('*')
         .eq('username', username)
         .eq('password', password)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Login Supabase error:', error.message);
+        console.error('Login Supabase error:', error.message, 'code:', error.code);
         return res.status(500).json({ error: 'Database error. Please try again.' });
       }
       if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
