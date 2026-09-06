@@ -539,8 +539,11 @@ function historyListHTML(orders, filter, search) {
 // TABLES — BILLING CENTER
 // ===========================
 async function renderTables(el, orders) {
+  console.log('[TABLES] renderTables called, API_TOKEN present:', !!API_TOKEN);
   const result = await apiCall('GET', '/tables');
+  console.log('[TABLES] apiCall result:', result ? 'success' : 'null/undefined');
   const tables = result || [];
+  console.log('[TABLES] tables array length:', tables.length);
 
   let html = '<div class="stat-cards">';
   tables.forEach(t => {

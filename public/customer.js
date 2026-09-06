@@ -24,11 +24,23 @@ async function apiCall(method, path, body) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     const opts = { method, headers: { 'Content-Type': 'application/json' }, signal: controller.signal };
+    
+    // Diagnostic: log request details (without exposing token)
+    console.log(`[API] ${method} ${API_BASE + path} | hasToken: ${!!API_TOKEN}`);
+    
     if (API_TOKEN) opts.headers['X-Admin-Token'] = API_TOKEN;
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(API_BASE + path, opts);
     clearTimeout(timeout);
-    if (!res.ok) throw new Error('API error: ' + res.status);
+    
+    // Diagnostic: log response status
+    console.log(`[API] Response: ${res.status} ${res.statusText}`);
+    
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => '');
+      console.error(`[API] Error response: ${res.status} - ${errorText}`);
+      throw new Error('API error: ' + res.status);
+    }
     return await res.json();
   } catch(e) {
     console.warn('API unavailable:', e.message);
