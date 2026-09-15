@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS table_sessions (
   "table" INTEGER NOT NULL,
   status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SETTLED')),
   total_amount NUMERIC DEFAULT 0,
-  payment_method TEXT CHECK (payment_method IN ('CASH', 'ONLINE') OR payment_method IS NULL),
+  payment_method TEXT CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT') OR payment_method IS NULL),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   settled_at TIMESTAMPTZ
 );
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS orders (
   total NUMERIC NOT NULL DEFAULT 0,
   order_status TEXT DEFAULT 'PENDING' CHECK (order_status IN ('PENDING', 'COMPLETED', 'CANCELLED')),
   payment_status TEXT DEFAULT 'UNPAID' CHECK (payment_status IN ('UNPAID', 'PAID', 'NOT_APPLICABLE')),
-  payment_method TEXT CHECK (payment_method IN ('CASH', 'ONLINE') OR payment_method IS NULL),
+  payment_method TEXT CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT') OR payment_method IS NULL),
   date TEXT NOT NULL,
   time TEXT NOT NULL,
   timestamp TIMESTAMPTZ DEFAULT NOW(),
@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS payments (
   session_id TEXT REFERENCES table_sessions(id),
   "table" INTEGER NOT NULL,
   amount NUMERIC NOT NULL,
-  payment_method TEXT NOT NULL CHECK (payment_method IN ('CASH', 'ONLINE')),
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT')),
+  cash_amount NUMERIC DEFAULT 0,
+  online_amount NUMERIC DEFAULT 0,
   payment_status TEXT DEFAULT 'PAID',
   paid_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -80,6 +82,38 @@ CREATE TABLE IF NOT EXISTS payments (
 
 CREATE INDEX idx_payments_session ON payments(session_id);
 
+-- BILLS table (auto-generated after successful table payment)
+CREATE TABLE IF NOT EXISTS bills (
+  id TEXT PRIMARY KEY,
+  bill_number TEXT UNIQUE NOT NULL,
+  session_id TEXT REFERENCES table_sessions(id),
+  "table" INTEGER NOT NULL,
+  orders JSONB DEFAULT '[]',
+  total NUMERIC NOT NULL DEFAULT 0,
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT')),
+  cash_amount NUMERIC DEFAULT 0,
+  online_amount NUMERIC DEFAULT 0,
+  payment_date TEXT NOT NULL,
+  payment_time TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bills_number ON bills(bill_number);
+CREATE INDEX IF NOT EXISTS idx_bills_session ON bills(session_id);
+CREATE INDEX IF NOT EXISTS idx_bills_table ON bills("table");
+CREATE INDEX IF NOT EXISTS idx_bills_created ON bills(created_at DESC);
+
 -- ORDER TYPE and DELIVERY columns (for Dine In / Takeaway / Delivery + region)
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_type TEXT DEFAULT 'dine-in' CHECK (order_type IN ('dine-in', 'takeaway', 'delivery'));
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery JSONB DEFAULT NULL;
+
+-- Add columns for split payment support
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;
+
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0;
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;
+
+-- Add columns for split payment accounting on orders
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;

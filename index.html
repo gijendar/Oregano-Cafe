@@ -16,7 +16,7 @@ img{max-width:100%;display:block}
 button{cursor:pointer;border:none;background:none;font-family:inherit}
 input,select{font-family:inherit}
 a{text-decoration:none;color:inherit}
-:root{--forest:#243B2A;--olive:#394B32;--cream:#F7F1E7;--ivory:#FCF9F3;--beige:#E8DDCC;--sage:#9BA58B;--gold:#B89A5A;--gold-light:#D4B87A;--espresso:#2B211B;--charcoal:#34322D;--muted:#7A756D;--border:rgba(57,75,50,0.1);--shadow-sm:0 2px 8px rgba(43,33,27,0.06);--shadow-md:0 4px 20px rgba(43,33,27,0.08);--shadow-lg:0 12px 40px rgba(43,33,27,0.12);--shadow-xl:0 20px 60px rgba(43,33,27,0.15);--radius-sm:10px;--radius-md:14px;--radius-lg:20px;--radius-xl:28px;--header-h:64px;--cat-h:56px}
+:root{--forest:#243B2A;--olive:#394B32;--cream:#F7F1E7;--ivory:#FCF9F3;--beige:#E8DDCC;--sage:#9BA58B;--gold:#B89A5A;--gold-light:#D4B87A;--espresso:#2B211B;--charcoal:#34322D;--muted:#7A756D;--border:rgba(57,75,50,0.1);--shadow-sm:0 2px 8px rgba(43,33,27,0.06);--shadow-md:0 4px 20px rgba(43,33,27,0.08);--shadow-lg:0 12px 40px rgba(43,33,27,0.12);--shadow-xl:0 20px 60px rgba(43,33,27,0.15);--radius-sm:10px;--radius-md:14px;--radius-lg:20px;--radius-xl:28px;--header-h:64px;--cat-h:56px;--completed-green:#2E7D32;--cancelled-red:#C0392B;--pending-amber:#B8860B;--text-muted:#7A756D;--warm-white:#FCF9F3;--profit-green:#2E7D32;--loss-red:#C62828}
 h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:400;color:var(--espresso);line-height:1.15}
 .label{font-size:11px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:var(--sage)}
 
@@ -428,6 +428,41 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
 .btn-logout:hover{background:rgba(192,57,43,0.15)}
 @media(max-width:768px){.admin-sidebar{transform:translateX(-100%)}.admin-sidebar.open{transform:translateX(0)}.admin-main{margin-left:0;padding:16px}.admin-main::before{left:0}.admin-main::after{left:0}.admin-hamburger{display:flex}.stat-cards{grid-template-columns:repeat(2,1fr)}}
 
+/* PRINT STYLES — BILL ONLY */
+@media print {
+  body * { visibility: hidden !important; }
+  #printableBill, #printableBill * { visibility: visible !important; }
+  #printableBill {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  #printableBill .bill-view-header {
+    border-bottom: 2px double #E8DDCC !important;
+  }
+  #printableBill .bill-view-header h2 {
+    font-size: 24px !important;
+    letter-spacing: 2px !important;
+  }
+  .admin-sidebar, .admin-main::before, .admin-main::after, .admin-topbar, .btn-settle, .btn-view, .btn-settle, [onclick*="printBill"], [onclick*="renderAdminSection"] {
+    display: none !important;
+    visibility: hidden !important;
+  }
+  @page {
+    size: portrait;
+    margin: 15mm;
+  }
+}
 </style>
 </head>
 <body>
@@ -445,30 +480,6 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
       <label>Enter Your Table Number</label>
       <input type="number" class="hero-input" id="tableInput" placeholder="e.g. 05" min="1" max="20" inputmode="numeric">
       <p class="hero-error" id="tableError"></p>
-      <div class="order-type-select" id="orderTypeSelect" style="display:none;margin-top:16px">
-        <div class="order-type-label">How would you like to order?</div>
-        <div class="order-type-options">
-          <button class="order-type-option active" data-type="dine-in" onclick="selectOrderType(this)">
-            <span class="order-type-icon">🍽️</span>
-            <span class="order-type-name">Dine In</span>
-            <span class="order-type-desc">Eat at the cafe</span>
-          </button>
-          <button class="order-type-option" data-type="takeaway" onclick="selectOrderType(this)">
-            <span class="order-type-icon">🛍️</span>
-            <span class="order-type-name">Takeaway</span>
-            <span class="order-type-desc">Pick up your order</span>
-          </button>
-          <button class="order-type-option" data-type="delivery" onclick="selectOrderType(this)">
-            <span class="order-type-icon">🚚</span>
-            <span class="order-type-name">Delivery</span>
-            <span class="order-type-desc">We deliver to you</span>
-          </button>
-        </div>
-        <div class="region-map" id="regionMap" style="display:none;margin-top:16px">
-          <div class="region-map-label">Select your region</div>
-          <div class="region-options" id="regionOptions"></div>
-        </div>
-      </div>
       <button class="btn-hero" id="continueBtn" style="margin-top:16px">VIEW MENU</button>
     </div>
     <div class="hero-admin-link"><a href="#admin">🔒 Admin Portal</a></div>
@@ -594,6 +605,7 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
       <div class="admin-nav-item" data-section="earnings"><span class="nav-icon">◆</span> DAILY EARNINGS</div>
       <div class="admin-nav-item" data-section="expenses"><span class="nav-icon">□</span> EXPENSES</div>
       <div class="admin-nav-item" data-section="reports"><span class="nav-icon">△</span> FINANCIAL REPORTS</div>
+      <div class="admin-nav-item" data-section="bills"><span class="nav-icon">📄</span> BILLS</div>
       <div class="admin-nav-item" data-section="tables"><span class="nav-icon">▢</span> TABLES</div>
       <div class="admin-nav-item" data-section="settings"><span class="nav-icon">⚙</span> SETTINGS</div>
     </nav>

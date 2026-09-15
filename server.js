@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
@@ -5,6 +6,104 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+
+// ===========================
+// IST TIMEZONE UTILITIES (Asia/Kolkata, UTC+05:30)
+// ===========================
+function getISTNow() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + 5.5 * 60 * 60 * 1000);
+}
+function formatISTDateTime(date) {
+  const d = date instanceof Date ? date : getISTNow();
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  let hours = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return {
+    date: yyyy + '-' + mm + '-' + dd,
+    dateDisplay: dd + '/' + mm + '/' + yyyy,
+    time12h: String(hours).padStart(2, '0') + ':' + min + ' ' + ampm,
+    time24h: String(d.getHours()).padStart(2, '0') + ':' + min,
+    timestamp: d.toISOString()
+  };
+}
+function getISTDateStr() {
+  return formatISTDateTime(getISTNow()).date;
+}
+function getISTTimeStr() {
+  return formatISTDateTime(getISTNow()).time12h + ' IST';
+}
+
+// ===========================
+// DATABASE STARTUP MIGRATIONS
+// ===========================
+async function runStartupMigrations() {
+  if (!USE_DB) return;
+  try {
+    // Attempt to fix bills table CHECK constraint to support SPLIT payments
+    // This is safe to run multiple times
+    const result = await supabase.rpc('exec_sql', { sql: `
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.table_constraints
+          WHERE constraint_name LIKE 'bills_payment_method_check%'
+          AND table_name = 'bills'
+        ) THEN
+          ALTER TABLE bills DROP CONSTRAINT IF EXISTS bills_payment_method_check;
+          ALTER TABLE bills ADD CONSTRAINT bills_payment_method_check
+            CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT'));
+        END IF;
+      END $$
+    ` });
+    if (result && result.error) {
+      console.log('[MIGRATION] rpc not available (expected):', result.error.message || 'ok');
+    } else {
+      console.log('[MIGRATION] Bills CHECK constraint updated successfully');
+    }
+    // Add cash_amount/online_amount columns to bills table if missing
+    try {
+      const colResult = await supabase.rpc('exec_sql', { sql: `
+        ALTER TABLE IF EXISTS bills ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0;
+        ALTER TABLE IF EXISTS bills ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;
+      ` });
+      if (colResult && colResult.error) {
+        console.log('[MIGRATION] Column addition skipped (exec_sql unavailable):', colResult.error.message || 'ok');
+      } else {
+        console.log('[MIGRATION] Bills cash_amount/online_amount columns ensured');
+      }
+    } catch (colErr) {
+      console.log('[MIGRATION] Column addition skipped (exec_sql unavailable):', colErr.message || 'ok');
+    }
+    // Read-only probe: hosted Supabase usually has no exec_sql RPC, so this is how we
+    // detect whether the split-payment columns actually exist.
+    try {
+      const { error: billProbe } = await supabase.from('bills').select('cash_amount, online_amount').limit(1);
+      const { error: payProbe } = await supabase.from('payments').select('cash_amount, online_amount').limit(1);
+      const missingBills = billProbe && billProbe.message && billProbe.message.includes('column');
+      const missingPays = payProbe && payProbe.message && payProbe.message.includes('column');
+      if (missingBills || missingPays) {
+        console.warn('=================================================================');
+        if (missingBills) console.warn('[MIGRATION REQUIRED] bills table is missing cash_amount/online_amount.');
+        if (missingPays) console.warn('[MIGRATION REQUIRED] payments table is missing cash_amount/online_amount.');
+        console.warn('[MIGRATION REQUIRED] SPLIT payment breakdowns will NOT persist to Supabase.');
+        console.warn('[MIGRATION REQUIRED] Run supabase/migrations/20260914_001_fix_payment_schema.sql');
+        console.warn('[MIGRATION REQUIRED] in the Supabase SQL Editor to fix this permanently.');
+        console.warn('=================================================================');
+      } else {
+        console.log('[MIGRATION] Split payment columns verified on bills + payments');
+      }
+    } catch (probeErr) { /* non-fatal */ }
+    console.log('[MIGRATION] Startup migrations completed');
+  } catch (e) {
+    // rpc function may not exist — this is expected
+    console.log('[MIGRATION] rpc not available (expected):', e.message);
+  }
+}
 
 // ===========================
 // SUPABASE DATABASE
@@ -26,6 +125,8 @@ if (USE_DB) {
     console.log('[SUPABASE] Connected (URL format could not be parsed)');
   }
   supabase = createClient(supabaseUrl, supabaseKey);
+  // Run startup migrations (safe to run multiple times)
+  runStartupMigrations();
 } else {
   console.log('[SUPABASE] Not configured - using in-memory fallback');
 }
@@ -49,7 +150,8 @@ const db = {
   orders: [],
   expenses: [],
   table_sessions: [],
-  payments: []
+  payments: [],
+  bills: []
 };
 
 // Extra order metadata (order_type, delivery) stored separately
@@ -170,14 +272,36 @@ app.post('/api/login', async (req, res) => {
 // ===========================
 async function getActiveSession(tableNum) {
   if (USE_DB) {
-    const { data } = await supabase
+    // Use maybeSingle() to avoid PGRST116 errors on 0 rows — returns null cleanly
+    const { data, error } = await supabase
       .from('table_sessions')
       .select('*')
       .eq('"table"', tableNum)
       .eq('status', 'ACTIVE')
       .order('created_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+
+    if (error) {
+      console.error('[SESSION] getActiveSession primary query error:', error.message, 'table:', tableNum);
+      // Fallback: try unquoted column name
+      const { data: fb, error: fbErr } = await supabase
+        .from('table_sessions')
+        .select('*')
+        .eq('table', tableNum)
+        .eq('status', 'ACTIVE')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!fbErr) {
+        console.log('[SESSION] getActiveSession fallback succeeded for table', tableNum, '→', fb ? fb.id : 'null');
+        return fb;
+      }
+      console.error('[SESSION] getActiveSession fallback also failed:', fbErr.message, 'table:', tableNum);
+      return null;
+    }
+
+    console.log('[SESSION] getActiveSession table', tableNum, '→', data ? data.id : 'null (no active session)');
     return data;
   }
   return db.table_sessions.find(s => s.table === tableNum && s.status === 'ACTIVE');
@@ -185,13 +309,25 @@ async function getActiveSession(tableNum) {
 
 async function createSession(tableNum) {
   if (USE_DB) {
-    // Count existing sessions to generate ID
-    const { count } = await supabase
+    // Get the highest existing session number to avoid ID collisions
+    const { data: lastSession } = await supabase
       .from('table_sessions')
-      .select('*', { count: 'exact', head: true });
-    const sessionNum = (count || 0) + 1;
+      .select('id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let sessionNum = 1;
+    if (lastSession && lastSession.id) {
+      const match = lastSession.id.match(/SES-(\d+)/);
+      if (match) sessionNum = parseInt(match[1], 10) + 1;
+    }
+
+    const sessionId = 'SES-' + String(sessionNum).padStart(6, '0');
+    console.log('[SESSION] createSession generating ID:', sessionId, 'for table', tableNum);
+
     const session = {
-      id: 'SES-' + String(sessionNum).padStart(6, '0'),
+      id: sessionId,
       table: tableNum,
       status: 'ACTIVE',
       total_amount: 0,
@@ -199,7 +335,22 @@ async function createSession(tableNum) {
       created_at: new Date().toISOString(),
       settled_at: null
     };
-    await supabase.from('table_sessions').insert(session);
+    const { error: insertErr } = await supabase.from('table_sessions').insert(session);
+    if (insertErr) {
+      console.error('[SESSION] createSession insert error:', insertErr.message, 'code:', insertErr.code, 'table:', tableNum);
+      // If duplicate key, try next number
+      if (insertErr.code === '23505') {
+        session.id = 'SES-' + String(sessionNum + 1).padStart(6, '0');
+        const { error: retryErr } = await supabase.from('table_sessions').insert(session);
+        if (retryErr) {
+          console.error('[SESSION] createSession retry also failed:', retryErr.message);
+        } else {
+          console.log('[SESSION] Created session (retry)', session.id, 'for table', tableNum);
+        }
+      }
+    } else {
+      console.log('[SESSION] Created session', session.id, 'for table', tableNum);
+    }
     return session;
   } else {
     const sessionNum = db.table_sessions.length + 1;
@@ -243,10 +394,10 @@ async function recalcSessionTotal(sessionId) {
 }
 
 async function generateOrderId() {
-  const now = new Date();
-  const ds = now.getFullYear().toString() +
-    String(now.getMonth() + 1).padStart(2, '0') +
-    String(now.getDate()).padStart(2, '0');
+  const ist = getISTNow();
+  const ds = ist.getFullYear().toString() +
+    String(ist.getMonth() + 1).padStart(2, '0') +
+    String(ist.getDate()).padStart(2, '0');
   const prefix = 'ORD-' + ds + '-';
 
   if (USE_DB) {
@@ -261,6 +412,34 @@ async function generateOrderId() {
     const num = (todayOrders.length + 1).toString().padStart(4, '0');
     return prefix + num;
   }
+}
+
+async function generateBillNumber() {
+  const ist = getISTNow();
+  const ds = ist.getFullYear().toString() +
+    String(ist.getMonth() + 1).padStart(2, '0') +
+    String(ist.getDate()).padStart(2, '0');
+  const prefix = 'TOC-' + ds + '-';
+
+  // Combine Supabase bills + in-memory bills for numbering
+  let count = 0;
+  if (USE_DB) {
+    try {
+      const { data: todayBills, error: billCountErr } = await supabase
+        .from('bills')
+        .select('bill_number')
+        .like('bill_number', prefix + '%');
+      if (!billCountErr && todayBills) {
+        count = todayBills.length;
+      } else {
+        // Table may not exist yet, fall through to in-memory count
+      }
+    } catch(e) { /* fall through to in-memory count */ }
+  }
+  // Also count in-memory bills for today
+  count += db.bills.filter(b => b.bill_number.startsWith(prefix)).length;
+  const num = (count + 1).toString().padStart(3, '0');
+  return prefix + num;
 }
 
 // ===========================
@@ -344,7 +523,7 @@ const TOTAL_TABLES = 20;
 
 app.post('/api/orders', asyncWrap(async (req, res) => {
   const { table, items, order_type, delivery } = req.body;
-  if (!table || !items || items.length === 0) {
+  if (table === undefined || table === null || table === '' || !items || items.length === 0) {
     return res.status(400).json({ error: 'Table and items are required' });
   }
   // Validate table number (1-20)
@@ -354,14 +533,17 @@ app.post('/api/orders', asyncWrap(async (req, res) => {
   }
 
   const now = new Date();
-  const ds = now.getFullYear().toString() +
-    String(now.getMonth() + 1).padStart(2, '0') +
-    String(now.getDate()).padStart(2, '0');
+  const istNow = getISTNow();
+  const ds = istNow.getFullYear().toString() +
+    String(istNow.getMonth() + 1).padStart(2, '0') +
+    String(istNow.getDate()).padStart(2, '0');
 
   const orderId = await generateOrderId();
   let session = await getActiveSession(Number(table));
+  console.log(`[NEW ORDER] ${orderId} - Table ${table} - getActiveSession → ${session ? session.id : 'null'}`);
   if (!session) {
     session = await createSession(Number(table));
+    console.log(`[NEW ORDER] ${orderId} - Table ${table} - createSession → ${session.id}`);
   }
 
   const order = {
@@ -381,7 +563,7 @@ app.post('/api/orders', asyncWrap(async (req, res) => {
     order_type: order_type || 'dine-in',
     delivery: delivery || null,
     date: ds.substring(0, 4) + '-' + ds.substring(4, 6) + '-' + ds.substring(6, 8),
-    time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+    time: formatISTDateTime(istNow).time12h + ' IST',
     timestamp: now.toISOString(),
     completed_at: null,
     cancelled_at: null,
@@ -394,10 +576,16 @@ app.post('/api/orders', asyncWrap(async (req, res) => {
   if (USE_DB) {
     const { error } = await supabase.from('orders').insert(order);
     if (error) {
+      console.error('[NEW ORDER] Insert error:', error.message, 'code:', error.code, 'orderId:', orderId, 'session_id:', order.session_id);
       // If columns are missing, insert without order_type/delivery
       const fallbackOrder = { ...order, order_type: undefined, delivery: undefined };
       const { error: retryError } = await supabase.from('orders').insert(fallbackOrder);
-      if (retryError) return res.status(500).json({ error: retryError.message });
+      if (retryError) {
+        console.error('[NEW ORDER] Retry insert also failed:', retryError.message, 'code:', retryError.code);
+        return res.status(500).json({ error: retryError.message });
+      }
+    } else {
+      console.log(`[NEW ORDER] Insert OK: ${orderId} session_id=${order.session_id} table=${table}`);
     }
   } else {
     db.orders.push(order);
@@ -480,8 +668,31 @@ app.delete('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
 
     await supabase.from('orders').delete().eq('id', req.params.id);
     console.log(`[ORDER DELETED] ${order.id} - Table ${order.table}`);
-    broadcastSSE('order_deleted', { orderId: order.id, table: order.table });
-    return res.json({ success: true });
+
+    // After deletion, check if session should be closed (no orders remaining)
+    let sessionClosed = false;
+    if (order.session_id) {
+      const { data: remainingOrders } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('session_id', order.session_id);
+
+      if (!remainingOrders || remainingOrders.length === 0) {
+        // No orders remain — close the session so table becomes AVAILABLE
+        await supabase.from('table_sessions').update({
+          status: 'SETTLED',
+          settled_at: new Date().toISOString(),
+          total_amount: 0
+        }).eq('id', order.session_id);
+        console.log(`[SESSION CLOSED] ${order.session_id} — no orders remaining after deletion`);
+        sessionClosed = true;
+      } else {
+        await recalcSessionTotal(order.session_id);
+      }
+    }
+
+    broadcastSSE('order_deleted', { orderId: order.id, table: order.table, session_id: order.session_id, session_closed: sessionClosed });
+    return res.json({ success: true, session_closed: sessionClosed });
   }
 
   const idx = db.orders.findIndex(o => o.id === req.params.id);
@@ -492,8 +703,27 @@ app.delete('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   }
   db.orders.splice(idx, 1);
   console.log(`[ORDER DELETED] ${order.id} - Table ${order.table}`);
-  broadcastSSE('order_deleted', { orderId: order.id, table: order.table });
-  res.json({ success: true });
+
+  // After deletion, check if session should be closed (in-memory)
+  let sessionClosed = false;
+  if (order.session_id) {
+    const remaining = db.orders.filter(o => o.session_id === order.session_id);
+    if (remaining.length === 0) {
+      const sess = db.table_sessions.find(s => s.id === order.session_id);
+      if (sess && sess.status === 'ACTIVE') {
+        sess.status = 'SETTLED';
+        sess.settled_at = new Date().toISOString();
+        sess.total_amount = 0;
+        console.log(`[SESSION CLOSED] ${order.session_id} — no orders remaining after deletion`);
+        sessionClosed = true;
+      }
+    } else {
+      await recalcSessionTotal(order.session_id);
+    }
+  }
+
+  broadcastSSE('order_deleted', { orderId: order.id, table: order.table, session_id: order.session_id, session_closed: sessionClosed });
+  res.json({ success: true, session_closed: sessionClosed });
 }));
 
 // ===========================
@@ -505,7 +735,7 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
   const tables = [];
 
   if (USE_DB) {
-    // Optimized: Fetch all active sessions in ONE query
+    // Fetch all active sessions in ONE query
     const { data: activeSessions } = await supabase
       .from('table_sessions')
       .select('id, "table"')
@@ -519,15 +749,15 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
     if (activeSessionIds.size > 0) {
       const { data: orders } = await supabase
         .from('orders')
-        .select('session_id, order_status, total')
+        .select('session_id, order_status, payment_status, total')
         .in('session_id', Array.from(activeSessionIds));
       allSessionOrders = orders || [];
     }
 
-    // Build a map of session data for quick lookup
+    // Build a map of session data for quick lookup by table number
     const sessionMap = new Map();
     for (const s of (activeSessions || [])) {
-      sessionMap.set(s.id, { table: s.table, session: s });
+      sessionMap.set(s.table, { session: s });
     }
 
     // Build a map of order data per session
@@ -545,72 +775,83 @@ app.get('/api/tables', authMiddleware, asyncWrap(async (req, res) => {
       const session = sessionData ? sessionData.session : null;
       const sessionId = session ? session.id : null;
 
-      let unpaidOrders = [];
-      let runningBill = 0;
-      let pendingOrders = 0;
       let allOrders = [];
-
       if (sessionId && sessionOrderMap.has(sessionId)) {
         allOrders = sessionOrderMap.get(sessionId);
-        unpaidOrders = allOrders.filter(o => o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
-        runningBill = unpaidOrders.reduce((sum, o) => sum + Number(o.total), 0);
-        pendingOrders = allOrders.filter(o => o.order_status === 'PENDING').length;
       }
 
-      // Table is OCCUPIED if:
-      // 1. Has active session, OR
-      // 2. Has any non-cancelled orders (PENDING or COMPLETED)
-      const hasActiveOrders = allOrders.some(o => o.order_status !== 'CANCELLED');
-      const isOccupied = !!session || hasActiveOrders;
+      // Only count NON-CANCELLED orders as current/active for occupancy
+      const currentOrders = allOrders.filter(o => o.order_status !== 'CANCELLED');
+      const unpaidOrders = currentOrders.filter(o => o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
+      const pendingOrders = currentOrders.filter(o => o.order_status === 'PENDING');
+      const runningBill = unpaidOrders.reduce((sum, o) => sum + Number(o.total), 0);
+
+      // OCCUPIED = has active session AND at least one current (non-cancelled) order
+      let isOccupied = !!session && currentOrders.length > 0;
+
+      // Auto-close session if all orders are cancelled (no active orders remain)
+      if (session && currentOrders.length === 0) {
+        await supabase.from('table_sessions').update({
+          status: 'SETTLED',
+          settled_at: new Date().toISOString(),
+          total_amount: 0
+        }).eq('id', session.id);
+        isOccupied = false;
+      }
 
       tables.push({
         number: i,
-        has_active_session: !!session,
-        session_id: sessionId,
+        has_active_session: !!session && isOccupied,
+        session_id: isOccupied ? sessionId : null,
         running_bill: runningBill,
         unpaid_count: unpaidOrders.length,
-        pending_count: pendingOrders,
+        pending_count: pendingOrders.length,
         total_orders: allOrders.length,
         status: isOccupied ? 'OCCUPIED' : 'AVAILABLE'
       });
       if (isOccupied) {
-        console.log(`[TABLE STATE] Table ${i} = OCCUPIED (session: ${!!session}, hasActiveOrders: ${hasActiveOrders}, orderCount: ${allOrders.length})`);
+        console.log(`[TABLE STATE] Table ${i} = OCCUPIED (${currentOrders.length} current orders, ${pendingOrders.length} pending)`);
       }
     }
     const occupiedTables = tables.filter(t => t.status === 'OCCUPIED');
-    console.log(`[TABLE STATE] Total occupied tables: ${occupiedTables.length}, occupied table numbers: ${occupiedTables.map(t => t.number).join(', ')}`);
+    console.log(`[TABLE STATE] Occupied: ${occupiedTables.length}/20 — tables: ${occupiedTables.map(t => t.number).join(', ')}`);
     return res.json(tables);
   }
 
   // Fallback: in-memory
   for (let i = 1; i <= 20; i++) {
     const session = db.table_sessions.find(s => s.table === i && s.status === 'ACTIVE');
-    let unpaidOrders = [];
-    let runningBill = 0;
-    let pendingOrders = 0;
-    let allSessionOrders = [];
+    let allOrders = [];
 
     if (session) {
-      unpaidOrders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
-      runningBill = unpaidOrders.reduce((sum, o) => sum + o.total, 0);
-      allSessionOrders = db.orders.filter(o => o.session_id === session.id);
-      pendingOrders = allSessionOrders.filter(o => o.order_status === 'PENDING').length;
+      allOrders = db.orders.filter(o => o.session_id === session.id);
     }
 
-    // Table is OCCUPIED if:
-    // 1. Has active session, OR
-    // 2. Has any non-cancelled orders (PENDING or COMPLETED)
-    const hasActiveOrders = allSessionOrders.some(o => o.order_status !== 'CANCELLED');
-    const isOccupied = !!session || hasActiveOrders;
+    // Only count NON-CANCELLED orders as current/active for occupancy
+    const currentOrders = allOrders.filter(o => o.order_status !== 'CANCELLED');
+    const unpaidOrders = currentOrders.filter(o => o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
+    const pendingOrders = currentOrders.filter(o => o.order_status === 'PENDING');
+    const runningBill = unpaidOrders.reduce((sum, o) => sum + o.total, 0);
+
+    // OCCUPIED = has active session AND at least one current (non-cancelled) order
+    let isOccupied = !!session && currentOrders.length > 0;
+
+    // Auto-close session if all orders are cancelled
+    if (session && currentOrders.length === 0) {
+      session.status = 'SETTLED';
+      session.settled_at = new Date().toISOString();
+      session.total_amount = 0;
+      isOccupied = false;
+    }
 
     tables.push({
       number: i,
-      has_active_session: !!session,
-      session_id: session ? session.id : null,
+      has_active_session: !!session && isOccupied,
+      session_id: isOccupied ? session.id : null,
       running_bill: runningBill,
       unpaid_count: unpaidOrders.length,
-      pending_count: pendingOrders,
-      total_orders: allSessionOrders.length,
+      pending_count: pendingOrders.length,
+      total_orders: allOrders.length,
       status: isOccupied ? 'OCCUPIED' : 'AVAILABLE'
     });
   }
@@ -643,19 +884,228 @@ app.get('/api/tables/:number/bill', authMiddleware, asyncWrap(async (req, res) =
 // Settle table bill (payment)
 app.post('/api/tables/:number/pay', authMiddleware, asyncWrap(async (req, res) => {
   const tableNum = Number(req.params.number);
-  const { payment_method } = req.body;
+  const { payment_method, cash_amount, online_amount } = req.body;
 
-  if (!payment_method || !['CASH', 'ONLINE'].includes(payment_method)) {
-    return res.status(400).json({ error: 'Payment method must be CASH or ONLINE' });
+  console.log(`[PAYMENT] Request - Table ${tableNum}, method: ${payment_method}`);
+  if (payment_method === 'SPLIT') {
+    console.log(`[PAYMENT] Cash: ₹${cash_amount}, Online: ₹${online_amount}`);
+  }
+
+  if (!payment_method || !['CASH', 'ONLINE', 'SPLIT'].includes(payment_method)) {
+    return res.status(400).json({ error: 'Payment method must be CASH, ONLINE, or SPLIT' });
   }
 
   const session = await getActiveSession(tableNum);
   if (!session) return res.status(404).json({ error: 'No active session for this table' });
 
   const now = new Date();
-  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const istNow = getISTNow();
+  const paymentIST = formatISTDateTime(istNow);
+
+  // Helper: process payment for a given set of unpaid orders (works for both DB and in-memory)
+  async function processPayment(unpaidOrders, source) {
+    // Server-side total calculation (authoritative)
+    const totalAmount = unpaidOrders.reduce((sum, o) => sum + Number(o.total), 0);
+    if (totalAmount === 0) return { error: 'No unpaid amount for this table' };
+
+    // Calculate cash/online split
+    let cashAmt = 0;
+    let onlineAmt = 0;
+    if (payment_method === 'CASH') {
+      cashAmt = totalAmount;
+      onlineAmt = 0;
+    } else if (payment_method === 'ONLINE') {
+      cashAmt = 0;
+      onlineAmt = totalAmount;
+    } else {
+      // SPLIT: validate cash + online = total
+      const clientCash = Number(cash_amount) || 0;
+      const clientOnline = Number(online_amount) || 0;
+      // Safe money comparison: round to 2 decimal places
+      const clientTotal = Math.round((clientCash + clientOnline) * 100) / 100;
+      const serverTotal = Math.round(totalAmount * 100) / 100;
+      if (clientTotal !== serverTotal) {
+        return { error: 'Cash + Online amount must equal the total bill amount.' };
+      }
+      cashAmt = clientCash;
+      onlineAmt = clientOnline;
+    }
+
+    if (source === 'db') {
+      // Mark all unpaid completed orders as paid
+      for (const o of unpaidOrders) {
+        await supabase.from('orders').update({
+          payment_status: 'PAID',
+          payment_method: payment_method,
+          paid_at: now.toISOString()
+        }).eq('id', o.id);
+      }
+
+      // Create payment record
+      const payment = {
+        id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+        session_id: session.id,
+        table: tableNum,
+        amount: totalAmount,
+        payment_method: payment_method,
+        cash_amount: cashAmt,
+        online_amount: onlineAmt,
+        payment_status: 'PAID',
+        paid_at: now.toISOString(),
+        created_at: now.toISOString()
+      };
+      // Persist the payment record. If the split columns are missing in Supabase,
+      // retry WITHOUT them but keep the full payment in memory — never silently
+      // discard the cash/online breakdown the user entered.
+      try {
+        const payResult = await supabase.from('payments').insert(payment);
+        if (payResult.error) {
+          console.warn('[PAYMENT] Supabase insert error:', payResult.error.message, 'code:', payResult.error.code);
+          const payColumnErr = payResult.error.message && payResult.error.message.includes('column');
+          const payConstraintErr = payResult.error.code === '23514' || (payResult.error.message && payResult.error.message.includes('check constraint'));
+          if (payColumnErr) {
+            console.warn('[PAYMENT] payments.cash_amount/online_amount missing — retrying without split breakdown. Run supabase/migrations/20260914_001_fix_payment_schema.sql to fix.');
+            const fallbackPayment = { ...payment };
+            delete fallbackPayment.cash_amount;
+            delete fallbackPayment.online_amount;
+            const payRetry = await supabase.from('payments').insert(fallbackPayment);
+            if (payRetry.error) {
+              console.warn('[PAYMENT] Fallback payment insert failed:', payRetry.error.message, '— payment kept in memory only.');
+              db.payments.push(payment);
+            }
+          } else if (payConstraintErr) {
+            console.warn('[PAYMENT] payment_method CHECK constraint rejected ' + payment_method + ' — payment kept in memory. Run supabase/migrations/20260914_001_fix_payment_schema.sql to allow SPLIT.');
+            db.payments.push(payment);
+          } else {
+            db.payments.push(payment);
+          }
+        }
+      } catch(e) {
+        console.error('[PAYMENT] Payment insert exception:', e.message, '— payment kept in memory only.');
+        db.payments.push(payment);
+      }
+
+      // Close the session
+      await supabase.from('table_sessions').update({
+        status: 'SETTLED',
+        settled_at: now.toISOString(),
+        total_amount: totalAmount,
+        payment_method: payment_method
+      }).eq('id', session.id);
+
+      // Generate ONE bill for the entire session
+      const billNumber = await generateBillNumber();
+      const bill = {
+        id: 'BILL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+        bill_number: billNumber,
+        session_id: session.id,
+        table: tableNum,
+        orders: unpaidOrders.map(o => ({
+          id: o.id,
+          items: o.items,
+          total: o.total,
+          time: o.time
+        })),
+        total: totalAmount,
+        payment_method: payment_method,
+        cash_amount: cashAmt,
+        online_amount: onlineAmt,
+        payment_date: paymentIST.date,
+        payment_time: paymentIST.time12h + ' IST',
+        created_at: now.toISOString()
+      };
+      let billInsertErr;
+      try {
+        const insertResult = await supabase.from('bills').insert(bill);
+        billInsertErr = insertResult.error;
+      } catch(e) { billInsertErr = e; }
+      if (billInsertErr) {
+        console.warn('[BILLS] Supabase insert error:', billInsertErr.message, 'code:', billInsertErr.code);
+        // Handle column errors (missing cash_amount/online_amount) OR constraint errors (SPLIT not allowed)
+        const isColumnErr = billInsertErr.message && billInsertErr.message.includes('column');
+        const isConstraintErr = billInsertErr.code === '23514' || (billInsertErr.message && billInsertErr.message.includes('check constraint'));
+        if (isColumnErr) {
+          // Split columns missing in Supabase. Insert the bill WITHOUT the breakdown so the
+          // bill itself is still persisted, but keep the FULL bill (with the real
+          // cash/online values) in memory so the API/UI never shows fake zeros.
+          console.warn('[BILLS] bills.cash_amount/online_amount columns missing — inserting bill without split breakdown. Run supabase/migrations/20260914_001_fix_payment_schema.sql to fix permanently.');
+          const fallbackBill = { ...bill };
+          delete fallbackBill.cash_amount;
+          delete fallbackBill.online_amount;
+          let retry;
+          try { retry = await supabase.from('bills').insert(fallbackBill); } catch (e) { retry = { error: { message: 'fallback failed: ' + e.message } }; }
+          if (retry.error) {
+            console.warn('[BILLS] Fallback insert also failed — bill kept in memory only:', retry.error.message);
+          } else {
+            console.log('[BILLS] Bill inserted via fallback (without split breakdown):', bill.bill_number);
+          }
+          db.bills.push(bill); // full bill with real split values stays available to the API
+        } else if (isConstraintErr) {
+          // NEVER rewrite a SPLIT payment to CASH — that would corrupt financial history.
+          // Keep the truthful bill in memory and tell the operator how to fix the DB.
+          console.warn('[BILLS] payment_method CHECK constraint rejected ' + payment_method + ' — bill kept in memory with correct method. Run supabase/migrations/20260914_001_fix_payment_schema.sql to allow SPLIT.');
+          db.bills.push(bill);
+        } else {
+          console.warn('[BILLS] Unhandled insert error — saving to in-memory:', billInsertErr.message);
+          db.bills.push(bill);
+        }
+      }
+
+      return { payment, bill };
+    } else {
+      // In-memory fallback
+      unpaidOrders.forEach(o => {
+        o.payment_status = 'PAID';
+        o.payment_method = payment_method;
+        o.paid_at = now.toISOString();
+      });
+
+      const payment = {
+        id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+        session_id: session.id,
+        table: tableNum,
+        amount: totalAmount,
+        payment_method: payment_method,
+        cash_amount: cashAmt,
+        online_amount: onlineAmt,
+        payment_status: 'PAID',
+        paid_at: now.toISOString(),
+        created_at: now.toISOString()
+      };
+      db.payments.push(payment);
+
+      const billNumber = await generateBillNumber();
+      const bill = {
+        id: 'BILL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+        bill_number: billNumber,
+        session_id: session.id,
+        table: tableNum,
+        orders: unpaidOrders.map(o => ({
+          id: o.id,
+          items: o.items,
+          total: o.total,
+          time: o.time
+        })),
+        total: totalAmount,
+        payment_method: payment_method,
+        cash_amount: cashAmt,
+        online_amount: onlineAmt,
+        payment_date: paymentIST.date,
+        payment_time: paymentIST.time12h + ' IST',
+        created_at: now.toISOString()
+      };
+      db.bills.push(bill);
+
+      return { payment, bill };
+    }
+  }
 
   if (USE_DB) {
+    // Idempotency: check if session already settled
+    if (session.status === 'SETTLED') {
+      return res.status(400).json({ error: 'This session has already been paid and settled.' });
+    }
+
     const { data: unpaidOrders } = await supabase
       .from('orders')
       .select('*')
@@ -663,106 +1113,233 @@ app.post('/api/tables/:number/pay', authMiddleware, asyncWrap(async (req, res) =
       .eq('order_status', 'COMPLETED')
       .eq('payment_status', 'UNPAID');
 
-    const totalAmount = (unpaidOrders || []).reduce((sum, o) => sum + Number(o.total), 0);
-    if (totalAmount === 0) return res.status(400).json({ error: 'No unpaid amount for this table' });
-
-    // Create payment record
-    const payment = {
-      id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
-      session_id: session.id,
-      table: tableNum,
-      amount: totalAmount,
-      payment_method: payment_method,
-      payment_status: 'PAID',
-      paid_at: now.toISOString(),
-      created_at: now.toISOString()
-    };
-    await supabase.from('payments').insert(payment);
-
-    // Mark all unpaid completed orders as paid
-    for (const o of (unpaidOrders || [])) {
-      await supabase.from('orders').update({
-        payment_status: 'PAID',
-        payment_method: payment_method,
-        paid_at: now.toISOString()
-      }).eq('id', o.id);
-    }
-
-    // Close the session
-    await supabase.from('table_sessions').update({
-      status: 'SETTLED',
-      settled_at: now.toISOString(),
-      total_amount: totalAmount,
-      payment_method: payment_method
-    }).eq('id', session.id);
+    const result = await processPayment(unpaidOrders || [], 'db');
+    if (result.error) return res.status(400).json({ error: result.error });
 
     session.status = 'SETTLED';
     session.settled_at = now.toISOString();
-    session.total_amount = totalAmount;
+    session.total_amount = result.bill.total;
     session.payment_method = payment_method;
 
-    console.log(`[TABLE PAID] Table ${tableNum} - ₹${totalAmount} - ${payment_method} - Session ${session.id}`);
-    broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: totalAmount, payment_method });
-    return res.json({ success: true, payment, session });
+    // Close the session in DB (may fail if payment_method CHECK doesn't include SPLIT)
+    try {
+      const closeResult = await supabase.from('table_sessions').update({
+        status: 'SETTLED',
+        settled_at: now.toISOString(),
+        total_amount: result.bill.total,
+        payment_method: payment_method
+      }).eq('id', session.id);
+      if (closeResult.error) {
+        // If CHECK constraint fails for SPLIT, try without payment_method
+        if (closeResult.error.message && closeResult.error.message.includes('check')) {
+          await supabase.from('table_sessions').update({
+            status: 'SETTLED',
+            settled_at: now.toISOString(),
+            total_amount: result.bill.total
+          }).eq('id', session.id);
+        }
+      }
+    } catch(e) { /* session already updated in memory */ }
+
+    console.log(`[PAYMENT] Bill created: ${result.bill.bill_number}`);
+    console.log(`[PAYMENT] Session closed: ${session.id}`);
+    console.log(`[TABLE PAID] Table ${tableNum} - ₹${result.bill.total} - ${payment_method} - Session ${session.id}`);
+    console.log(`[SSE] Broadcasting table_paid for Table ${tableNum}`);
+    broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: result.bill.total, payment_method });
+    return res.json({ success: true, payment: result.payment, session, bill: result.bill });
   }
 
-  // Fallback: in-memory
+  // In-memory: idempotency check
+  if (session.status === 'SETTLED') {
+    return res.status(400).json({ error: 'This session has already been paid and settled.' });
+  }
+
   const unpaidOrders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
-  const totalAmount = unpaidOrders.reduce((sum, o) => sum + o.total, 0);
-  if (totalAmount === 0) return res.status(400).json({ error: 'No unpaid amount for this table' });
-
-  const payment = {
-    id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
-    session_id: session.id,
-    table: tableNum,
-    amount: totalAmount,
-    payment_method: payment_method,
-    payment_status: 'PAID',
-    paid_at: now.toISOString(),
-    created_at: now.toISOString()
-  };
-  db.payments.push(payment);
-
-  unpaidOrders.forEach(o => {
-    o.payment_status = 'PAID';
-    o.payment_method = payment_method;
-    o.paid_at = now.toISOString();
-  });
+  const result = await processPayment(unpaidOrders, 'mem');
+  if (result.error) return res.status(400).json({ error: result.error });
 
   session.status = 'SETTLED';
   session.settled_at = now.toISOString();
-  session.total_amount = totalAmount;
+  session.total_amount = result.bill.total;
   session.payment_method = payment_method;
 
-  console.log(`[TABLE PAID] Table ${tableNum} - ₹${totalAmount} - ${payment_method} - Session ${session.id}`);
-  broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: totalAmount, payment_method });
-  res.json({ success: true, payment, session });
+  console.log(`[TABLE PAID] Table ${tableNum} - ₹${result.bill.total} - ${payment_method} - Session ${session.id}`);
+  broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: result.bill.total, payment_method });
+  res.json({ success: true, payment: result.payment, session, bill: result.bill });
 }));
+
+// Get all bills (admin)
+app.get('/api/bills', authMiddleware, asyncWrap(async (req, res) => {
+  if (USE_DB) {
+    try {
+      const { data: bills, error } = await supabase
+        .from('bills')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.warn('[BILLS] Supabase query failed:', error.message);
+        // Merge Supabase bills with in-memory bills (prefer in-memory on duplicate bill_number)
+        const memIds = new Set(db.bills.map(b => b.bill_number));
+        const merged = [...db.bills, ...(bills || []).filter(sb => !memIds.has(sb.bill_number))];
+        merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        return res.json(merged);
+      }
+      // Also include any in-memory bills not yet in Supabase.
+      // If a bill_number exists in BOTH, prefer the in-memory version — it carries the
+      // complete cash_amount/online_amount breakdown even when Supabase lacks the columns.
+      const supaBillIds = new Set((bills || []).map(b => b.bill_number));
+      const memOnly = db.bills.filter(b => !supaBillIds.has(b.bill_number));
+      const shadowed = db.bills.filter(b => supaBillIds.has(b.bill_number));
+      const deduped = [...shadowed, ...(bills || []).filter(sb => !shadowed.some(mb => mb.bill_number === sb.bill_number)), ...memOnly];
+      deduped.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      return res.json(deduped);
+    } catch(e) {
+      console.warn('[BILLS] Supabase error:', e.message);
+      return res.json(db.bills.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+    }
+  }
+  res.json(db.bills.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+}));
+
+// Get bill by bill number
+app.get('/api/bills/:billNumber', authMiddleware, asyncWrap(async (req, res) => {
+  const billNumber = req.params.billNumber;
+
+  // In-memory bills are preferred: they are the complete record (including the
+  // real cash_amount/online_amount breakdown) even when Supabase is missing the
+  // split columns or rejected the insert. They shadow any incomplete Supabase row.
+  const memBill = db.bills.find(b => b.bill_number === billNumber);
+  if (memBill) return res.json(memBill);
+
+  if (USE_DB) {
+    try {
+      const { data: bill, error } = await supabase
+        .from('bills')
+        .select('*')
+        .eq('bill_number', billNumber)
+        .single();
+      if (error || !bill) {
+        return res.status(404).json({ error: 'Bill not found' });
+      }
+      return res.json(bill);
+    } catch(e) {
+      return res.status(404).json({ error: 'Bill not found' });
+    }
+  }
+  return res.status(404).json({ error: 'Bill not found' });
+}));
+
+// Delete bill permanently
+app.delete('/api/bills/:billNumber', authMiddleware, asyncWrap(async (req, res) => {
+  const billNumber = req.params.billNumber;
+  if (USE_DB) {
+    // Try to find and delete from Supabase
+    try {
+      const { data: bill, error: findError } = await supabase
+        .from('bills')
+        .select('id, bill_number')
+        .eq('bill_number', billNumber)
+        .maybeSingle();
+
+      if (!findError && bill) {
+        const { error: deleteError } = await supabase
+          .from('bills')
+          .delete()
+          .eq('bill_number', billNumber);
+
+        if (deleteError) {
+          console.error('[BILLS] Supabase delete error:', deleteError.message);
+          return res.status(500).json({ error: 'Failed to delete bill' });
+        }
+        console.log(`[BILL DELETED] ${billNumber}`);
+        return res.json({ success: true });
+      }
+    } catch(e) {
+      // Supabase table may not exist — fall through to in-memory
+    }
+  }
+
+  // Fallback: in-memory
+  const idx = db.bills.findIndex(b => b.bill_number === billNumber);
+  if (idx !== -1) {
+    db.bills.splice(idx, 1);
+    console.log(`[BILL DELETED] ${billNumber}`);
+    return res.json({ success: true });
+  }
+
+  return res.status(404).json({ error: 'Bill not found' });
+}));
+
+
+// Helper: convert UTC timestamp to IST date string (YYYY-MM-DD)
+function utcToISTDateStr(utcTimestamp) {
+  if (!utcTimestamp) return null;
+  const d = new Date(utcTimestamp);
+  const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+  const ist = new Date(utc + 5.5 * 60 * 60 * 1000);
+  const dd = String(ist.getDate()).padStart(2, '0');
+  const mm = String(ist.getMonth() + 1).padStart(2, '0');
+  const yyyy = ist.getFullYear();
+  return yyyy + '-' + mm + '-' + dd;
+}
 
 // ===========================
 // PAYMENTS / EARNINGS
+// Uses bills as the authoritative source for payment-date-based earnings.
+// A bill's payment_date is the IST date when payment was completed.
 // ===========================
 app.get('/api/earnings', authMiddleware, asyncWrap(async (req, res) => {
   const { date } = req.query;
-  const targetDate = date || new Date().toISOString().split('T')[0];
+  const targetDate = date || getISTDateStr();
+
+  console.log(`[EARNINGS] Request for date: ${targetDate}`);
 
   if (USE_DB) {
-    const { data: paidOrders } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('payment_status', 'PAID')
-      .eq('date', targetDate);
+    // Use bills as the source of truth — bills have payment_date in IST
+    // Merge Supabase + in-memory (bills that failed Supabase insert go to memory)
+    let supaDayBills = [];
+    try {
+      const billsResult = await supabase
+        .from('bills')
+        .select('*')
+        .eq('payment_date', targetDate);
+      if (billsResult.error) {
+        console.warn('[EARNINGS] Bills query error:', billsResult.message || billsResult.error.message);
+      } else {
+        supaDayBills = billsResult.data || [];
+      }
+    } catch(e) {
+      console.warn('[EARNINGS] Bills query exception:', e.message);
+    }
+    const memDayBills = db.bills.filter(b => b.payment_date === targetDate);
+    const memBillIds = new Set(memDayBills.map(b => b.bill_number));
+    const bills = [...supaDayBills.filter(b => !memBillIds.has(b.bill_number)), ...memDayBills];
 
-    const orders = paidOrders || [];
-    const cashOrders = orders.filter(o => o.payment_method === 'CASH');
-    const onlineOrders = orders.filter(o => o.payment_method === 'ONLINE');
+    if (bills.length === 0 && supaDayBills.length === 0 && memDayBills.length === 0) {
+      console.log('[EARNINGS] No bills found (Supabase: 0, In-memory: 0)');
+    } else {
+      console.log(`[EARNINGS] Bills: Supabase=${supaDayBills.length}, InMemory=${memDayBills.length}, Merged=${bills.length}`);
+    }
+    console.log(`[EARNINGS] Found ${bills.length} bills for ${targetDate}`);
 
-    const totalEarnings = orders.reduce((s, o) => s + Number(o.total), 0);
-    const cashTotal = cashOrders.reduce((s, o) => s + Number(o.total), 0);
-    const onlineTotal = onlineOrders.reduce((s, o) => s + Number(o.total), 0);
+    const totalEarnings = bills.reduce((s, b) => s + Number(b.total || 0), 0);
+    let cashTotal = 0;
+    let onlineTotal = 0;
+    for (const b of bills) {
+      if (b.payment_method === 'CASH') {
+        cashTotal += Number(b.total || 0);
+      } else if (b.payment_method === 'ONLINE') {
+        onlineTotal += Number(b.total || 0);
+      } else if (b.payment_method === 'SPLIT') {
+        cashTotal += Number(b.cash_amount || 0);
+        onlineTotal += Number(b.online_amount || 0);
+      }
+    }
 
     const { data: expenses } = await supabase.from('expenses').select('amount').eq('date', targetDate);
     const todayExpenses = (expenses || []).reduce((s, e) => s + Number(e.amount), 0);
+
+    console.log(`[EARNINGS] Total: ₹${totalEarnings}, Cash: ₹${cashTotal}, Online: ₹${onlineTotal}`);
 
     return res.json({
       date: targetDate,
@@ -771,20 +1348,28 @@ app.get('/api/earnings', authMiddleware, asyncWrap(async (req, res) => {
       onlineTotal,
       totalExpenses: todayExpenses,
       netProfit: totalEarnings - todayExpenses,
-      paidOrderCount: orders.length,
-      cashCount: cashOrders.length,
-      onlineCount: onlineOrders.length
+      paidOrderCount: bills.reduce((sum, b) => sum + (b.orders ? b.orders.length : 0), 0),
+      cashCount: bills.filter(b => b.payment_method === 'CASH').length,
+      onlineCount: bills.filter(b => b.payment_method === 'ONLINE').length
     });
   }
 
-  // Fallback
-  const paidOrders = db.orders.filter(o => o.payment_status === 'PAID' && o.date === targetDate);
-  const cashOrders = paidOrders.filter(o => o.payment_method === 'CASH');
-  const onlineOrders = paidOrders.filter(o => o.payment_method === 'ONLINE');
-  const totalEarnings = paidOrders.reduce((s, o) => s + o.total, 0);
-  const cashTotal = cashOrders.reduce((s, o) => s + o.total, 0);
-  const onlineTotal = onlineOrders.reduce((s, o) => s + o.total, 0);
+  // In-memory fallback: use bills
+  const dayBills = db.bills.filter(b => b.payment_date === targetDate);
+  const totalEarnings = dayBills.reduce((s, b) => s + Number(b.total || 0), 0);
+  let cashTotal = 0;
+  let onlineTotal = 0;
+  for (const b of dayBills) {
+    if (b.payment_method === 'CASH') cashTotal += Number(b.total || 0);
+    else if (b.payment_method === 'ONLINE') onlineTotal += Number(b.total || 0);
+    else if (b.payment_method === 'SPLIT') {
+      cashTotal += Number(b.cash_amount || 0);
+      onlineTotal += Number(b.online_amount || 0);
+    }
+  }
   const todayExpenses = db.expenses.filter(e => e.date === targetDate).reduce((s, e) => s + e.amount, 0);
+
+  console.log(`[EARNINGS] Total: ₹${totalEarnings}, Cash: ₹${cashTotal}, Online: ₹${onlineTotal}`);
 
   res.json({
     date: targetDate,
@@ -793,11 +1378,45 @@ app.get('/api/earnings', authMiddleware, asyncWrap(async (req, res) => {
     onlineTotal,
     totalExpenses: todayExpenses,
     netProfit: totalEarnings - todayExpenses,
-    paidOrderCount: paidOrders.length,
-    cashCount: cashOrders.length,
-    onlineCount: onlineOrders.length
+    paidOrderCount: dayBills.reduce((sum, b) => sum + (b.orders ? b.orders.length : 0), 0),
+    cashCount: dayBills.filter(b => b.payment_method === 'CASH').length,
+    onlineCount: dayBills.filter(b => b.payment_method === 'ONLINE').length
   });
-}));
+}
+));
+
+// Fallback: earnings from orders (used when bills query fails)
+async function earningsFallbackFromOrders(targetDate, res) {
+  console.log('[EARNINGS] Falling back to orders-based calculation');
+  if (USE_DB) {
+    // Use paid_at timestamp converted to IST date instead of order.date
+    const { data: allPaidOrders } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('payment_status', 'PAID');
+    const orders = (allPaidOrders || []).filter(o => {
+      const istDate = utcToISTDateStr(o.paid_at);
+      return istDate === targetDate;
+    });
+    const totalEarnings = orders.reduce((s, o) => s + Number(o.total), 0);
+    let cashTotal = 0;
+    let onlineTotal = 0;
+    for (const o of orders) {
+      if (o.payment_method === 'CASH') cashTotal += Number(o.total);
+      else if (o.payment_method === 'ONLINE') onlineTotal += Number(o.total);
+      else if (o.payment_method === 'SPLIT') { cashTotal += Number(o.cash_amount || 0); onlineTotal += Number(o.online_amount || 0); }
+    }
+    const { data: expenses } = await supabase.from('expenses').select('amount').eq('date', targetDate);
+    const todayExpenses = (expenses || []).reduce((s, e) => s + Number(e.amount), 0);
+    return res.json({
+      date: targetDate, totalEarnings, cashTotal, onlineTotal,
+      totalExpenses: todayExpenses, netProfit: totalEarnings - todayExpenses,
+      paidOrderCount: orders.length, cashCount: orders.filter(o => o.payment_method === 'CASH').length,
+      onlineCount: orders.filter(o => o.payment_method === 'ONLINE').length
+    });
+  }
+  res.json({ date: targetDate, totalEarnings: 0, cashTotal: 0, onlineTotal: 0, totalExpenses: 0, netProfit: 0, paidOrderCount: 0, cashCount: 0, onlineCount: 0 });
+}
 
 // ===========================
 // EXPENSE ROUTES
@@ -880,12 +1499,17 @@ app.delete('/api/expenses/:id', authMiddleware, asyncWrap(async (req, res) => {
 
 // ===========================
 // FINANCIAL REPORTS
+// Uses bills as authoritative source for payment-date-based earnings.
+// Orders are used for order-count metrics (by order creation date).
 // ===========================
 app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'From and to dates required' });
 
+  console.log(`[REPORTS] Request for range: ${from} to ${to}`);
+
   if (USE_DB) {
+    // Orders for order-count metrics (by order creation date)
     const { data: orders } = await supabase
       .from('orders')
       .select('*')
@@ -897,6 +1521,30 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
       .gte('date', from)
       .lte('date', to);
 
+    // Bills for earnings (by payment_date)
+    let supaBills = [];
+    try {
+      const billsResult = await supabase
+        .from('bills')
+        .select('*')
+        .gte('payment_date', from)
+        .lte('payment_date', to);
+      if (billsResult.error) {
+        console.warn('[REPORTS] Bills query error:', billsResult.error.message);
+      } else {
+        supaBills = billsResult.data || [];
+      }
+    } catch(billsErr) {
+      console.warn('[REPORTS] Bills query exception:', billsErr.message);
+    }
+
+    // Merge with in-memory bills (bills that failed Supabase insert)
+    const memBills = db.bills.filter(b => b.payment_date >= from && b.payment_date <= to);
+    const memBillIds = new Set(memBills.map(b => b.bill_number));
+    // Add Supabase bills not already in memory, then add all memory bills
+    const supaOnlyBills = supaBills.filter(b => !memBillIds.has(b.bill_number));
+    const allBills = [...supaOnlyBills, ...memBills];
+
     const allOrders = orders || [];
     const allExpenses = expenses || [];
 
@@ -905,10 +1553,18 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
     const cancelledOrders = allOrders.filter(o => o.order_status === 'CANCELLED').length;
     const pendingOrders = allOrders.filter(o => o.order_status === 'PENDING').length;
 
-    const paidOrders = allOrders.filter(o => o.payment_status === 'PAID');
-    const totalEarnings = paidOrders.reduce((sum, o) => sum + Number(o.total), 0);
-    const cashTotal = paidOrders.filter(o => o.payment_method === 'CASH').reduce((sum, o) => sum + Number(o.total), 0);
-    const onlineTotal = paidOrders.filter(o => o.payment_method === 'ONLINE').reduce((sum, o) => sum + Number(o.total), 0);
+    // Earnings from bills (authoritative payment-date-based)
+    const totalEarnings = allBills.reduce((sum, b) => sum + Number(b.total || 0), 0);
+    let cashTotal = 0, onlineTotal = 0;
+    for (const b of allBills) {
+      if (b.payment_method === 'CASH') cashTotal += Number(b.total || 0);
+      else if (b.payment_method === 'ONLINE') onlineTotal += Number(b.total || 0);
+      else if (b.payment_method === 'SPLIT') {
+        cashTotal += Number(b.cash_amount || 0);
+        onlineTotal += Number(b.online_amount || 0);
+      }
+    }
+
     const totalExpenses = allExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
     const profit = totalEarnings - totalExpenses;
 
@@ -918,6 +1574,8 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
     allOrders.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     allExpenses.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
+    console.log(`[REPORTS] Bills: Supabase=${supaBills.length}, InMemory=${memBills.length}, Merged=${allBills.length}, Earnings: ₹${totalEarnings}, Cash: ₹${cashTotal}, Online: ₹${onlineTotal}`);
+
     return res.json({
       from, to, totalOrders, completedOrders, cancelledOrders, pendingOrders,
       totalEarnings, cashTotal, onlineTotal, totalExpenses, netProfit: profit,
@@ -925,13 +1583,21 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
     });
   }
 
-  // Fallback
+  // In-memory fallback: use bills for earnings
+  const allBills = db.bills.filter(b => b.payment_date >= from && b.payment_date <= to);
+  const totalEarnings = allBills.reduce((sum, b) => sum + Number(b.total || 0), 0);
+  let cashTotal = 0, onlineTotal = 0;
+  for (const b of allBills) {
+    if (b.payment_method === 'CASH') cashTotal += Number(b.total || 0);
+    else if (b.payment_method === 'ONLINE') onlineTotal += Number(b.total || 0);
+    else if (b.payment_method === 'SPLIT') {
+      cashTotal += Number(b.cash_amount || 0);
+      onlineTotal += Number(b.online_amount || 0);
+    }
+  }
+
   const orders = db.orders.filter(o => o.date >= from && o.date <= to);
   const expenses = db.expenses.filter(e => e.date >= from && e.date <= to);
-  const paidOrders = orders.filter(o => o.payment_status === 'PAID');
-  const totalEarnings = paidOrders.reduce((sum, o) => sum + o.total, 0);
-  const cashTotal = paidOrders.filter(o => o.payment_method === 'CASH').reduce((sum, o) => sum + o.total, 0);
-  const onlineTotal = paidOrders.filter(o => o.payment_method === 'ONLINE').reduce((sum, o) => sum + o.total, 0);
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
   const expBreakdown = {};
   expenses.forEach(e => { expBreakdown[e.name] = (expBreakdown[e.name] || 0) + e.amount; });
@@ -954,7 +1620,7 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
 // DASHBOARD STATS
 // ===========================
 app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getISTDateStr();
 
   if (USE_DB) {
     const { data: todayOrders } = await supabase.from('orders').select('*').eq('date', today);
@@ -965,16 +1631,40 @@ app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
     const tOrders = todayOrders || [];
     const tExpenses = todayExpenses || [];
 
-    const paidToday = tOrders.filter(o => o.payment_status === 'PAID');
-    const earnings = paidToday.reduce((s, o) => s + Number(o.total), 0);
-    const cashTotal = paidToday.filter(o => o.payment_method === 'CASH').reduce((s, o) => s + Number(o.total), 0);
-    const onlineTotal = paidToday.filter(o => o.payment_method === 'ONLINE').reduce((s, o) => s + Number(o.total), 0);
-    const expenses = tExpenses.reduce((s, e) => s + Number(e.amount), 0);
+    // Dashboard TODAY'S ORDERS = distinct customer/table sessions started today
+    const todaySessionIds = new Set(tOrders.map(o => o.session_id).filter(Boolean));
+    const todaySessionsCount = todaySessionIds.size;
+
+    // Earnings from bills (authoritative payment-date-based) — merge Supabase + in-memory
+    let dashBills = [];
+    try {
+      const dashBillsResult = await supabase
+        .from('bills')
+        .select('*')
+        .eq('payment_date', today);
+      if (!dashBillsResult.error) dashBills = dashBillsResult.data || [];
+    } catch(e) { /* continue */ }
+    const dashMemBills = db.bills.filter(b => b.payment_date === today);
+    const dashMemIds = new Set(dashMemBills.map(b => b.bill_number));
+    const bills = [...dashBills.filter(b => !dashMemIds.has(b.bill_number)), ...dashMemBills];
+    const earnings = bills.reduce((s, b) => s + Number(b.total || 0), 0);
+    let cashTotal = 0, onlineTotal = 0;
+    for (const b of bills) {
+      if (b.payment_method === 'CASH') cashTotal += Number(b.total || 0);
+      else if (b.payment_method === 'ONLINE') onlineTotal += Number(b.total || 0);
+      else if (b.payment_method === 'SPLIT') {
+        cashTotal += Number(b.cash_amount || 0);
+        onlineTotal += Number(b.online_amount || 0);
+      }
+    }    const expenses = tExpenses.reduce((s, e) => s + Number(e.amount), 0);
+
+    console.log(`[DASHBOARD] Bills: Supabase=${dashBills.length}, InMemory=${dashMemBills.length}, Merged=${bills.length}, Earnings: ₹${earnings}`);
 
     const pending = (allPending || []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 10);
 
+
     return res.json({
-      todayOrdersCount: tOrders.length,
+      todayOrdersCount: todaySessionsCount,
       pendingCount: (allPending || []).length,
       completedTodayCount: tOrders.filter(o => o.order_status === 'COMPLETED').length,
       cancelledTodayCount: tOrders.filter(o => o.order_status === 'CANCELLED').length,
@@ -988,18 +1678,29 @@ app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
     });
   }
 
-  // Fallback
+  // Fallback: use bills for earnings (payment-date-based)
   const allOrders = db.orders;
   const todayOrders = allOrders.filter(o => o.date === today);
   const pending = allOrders.filter(o => o.order_status === 'PENDING');
-  const paidToday = todayOrders.filter(o => o.payment_status === 'PAID');
-  const earnings = paidToday.reduce((s, o) => s + o.total, 0);
-  const cashTotal = paidToday.filter(o => o.payment_method === 'CASH').reduce((s, o) => s + o.total, 0);
-  const onlineTotal = paidToday.filter(o => o.payment_method === 'ONLINE').reduce((s, o) => s + o.total, 0);
+  const todayBills = db.bills.filter(b => b.payment_date === today);
+  const earnings = todayBills.reduce((s, b) => s + Number(b.total || 0), 0);
+  let cashTotal = 0, onlineTotal = 0;
+  for (const b of todayBills) {
+    if (b.payment_method === 'CASH') cashTotal += Number(b.total || 0);
+    else if (b.payment_method === 'ONLINE') onlineTotal += Number(b.total || 0);
+    else if (b.payment_method === 'SPLIT') {
+      cashTotal += Number(b.cash_amount || 0);
+      onlineTotal += Number(b.online_amount || 0);
+    }
+  }
   const todayExpenses = db.expenses.filter(e => e.date === today).reduce((s, e) => s + e.amount, 0);
 
+  // Dashboard TODAY'S ORDERS = distinct customer/table sessions started today
+  const todaySessionIds = new Set(todayOrders.map(o => o.session_id).filter(Boolean));
+  const todaySessionsCount = todaySessionIds.size;
+
   res.json({
-    todayOrdersCount: todayOrders.length,
+    todayOrdersCount: todaySessionsCount,
     pendingCount: pending.length,
     completedTodayCount: todayOrders.filter(o => o.order_status === 'COMPLETED').length,
     cancelledTodayCount: todayOrders.filter(o => o.order_status === 'CANCELLED').length,
@@ -1031,6 +1732,397 @@ app.get('/admin.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.sendFile(path.join(__dirname, 'public', 'admin.js'));
 });
+
+// ===========================
+// SESSION HISTORY — group orders by session for Order History UI
+// ===========================
+app.get('/api/sessions/history', authMiddleware, asyncWrap(async (req, res) => {
+  const { date, status } = req.query;
+
+  console.log(`[SESSION HISTORY] Request - date: ${date || 'none'}, status: ${status || 'ALL'}`);
+
+  if (USE_DB) {
+    // Get all sessions with high limit to avoid Supabase default 1000 row cap
+    let sessionQuery = supabase.from('table_sessions').select('*').limit(5000);
+    if (status && status !== 'ALL') {
+      sessionQuery = sessionQuery.eq('status', status);
+    }
+    sessionQuery = sessionQuery.order('created_at', { ascending: false });
+    const { data: sessions, error: sErr } = await sessionQuery;
+    if (sErr) {
+      console.error('[SESSION HISTORY] Supabase sessions query error:', sErr.message, 'code:', sErr.code);
+      return res.json([]); // Return empty array, not error
+    }
+
+    const allSessions = sessions || [];
+
+    // If date filter is provided, get sessions that have orders on that date
+    let filteredSessionIds = null;
+    if (date) {
+      const { data: dateOrders } = await supabase
+        .from('orders')
+        .select('session_id')
+        .eq('date', date);
+      filteredSessionIds = new Set((dateOrders || []).map(o => o.session_id).filter(Boolean));
+    }
+
+    // Get orders for all sessions (batch in chunks to avoid Supabase limits)
+    const sessionIds = allSessions.map(s => s.id);
+    let allOrders = [];
+    if (sessionIds.length > 0) {
+      // Batch in chunks of 100 to avoid URL length limits
+      const chunkSize = 100;
+      for (let i = 0; i < sessionIds.length; i += chunkSize) {
+        const chunk = sessionIds.slice(i, i + chunkSize);
+        const { data: chunkOrders, error: ordersErr } = await supabase
+          .from('orders')
+          .select('*')
+          .in('session_id', chunk)
+          .order('timestamp', { ascending: true })
+          .limit(5000);
+        if (ordersErr) {
+          console.error('[SESSION HISTORY] Orders query error for chunk:', ordersErr.message);
+          continue; // Skip this chunk, try others
+        }
+        allOrders = allOrders.concat(chunkOrders || []);
+      }
+    }
+    console.log(`[SESSION HISTORY] Found ${allSessions.length} sessions, ${allOrders.length} orders`);
+    // Diagnostic: log session IDs and their order counts
+    allSessions.forEach(s => {
+      const matchCount = allOrders.filter(o => o.session_id === s.id).length;
+      console.log(`[SESSION HISTORY] Session ${s.id} (table ${s.table}, status=${s.status}) → ${matchCount} orders`);
+    });
+    // Diagnostic: log distinct session_ids found in orders
+    const distinctOrderSessionIds = [...new Set(allOrders.map(o => o.session_id).filter(Boolean))];
+    console.log(`[SESSION HISTORY] Distinct order session_ids: ${JSON.stringify(distinctOrderSessionIds)}`);
+
+    // Group orders by session
+    const sessionOrdersMap = new Map();
+    for (const o of allOrders) {
+      if (!sessionOrdersMap.has(o.session_id)) sessionOrdersMap.set(o.session_id, []);
+      sessionOrdersMap.get(o.session_id).push(o);
+    }
+
+    // Merge extra metadata
+    for (const [sid, orders] of sessionOrdersMap) {
+      sessionOrdersMap.set(sid, orders.map(o => {
+        const meta = orderMeta.get(o.id);
+        return meta ? { ...o, ...meta } : o;
+      }));
+    }
+
+    // Fetch bills for settled sessions in bulk
+    const settledSessionIds = allSessions.filter(s => s.status === 'SETTLED').map(s => s.id);
+    const billMap = new Map();
+    if (settledSessionIds.length > 0 && USE_DB) {
+      const { data: bills } = await supabase.from('bills').select('*').in('session_id', settledSessionIds);
+      (bills || []).forEach(b => billMap.set(b.session_id, b));
+    } else if (settledSessionIds.length > 0) {
+      db.bills.forEach(b => { if (settledSessionIds.includes(b.session_id)) billMap.set(b.session_id, b); });
+    }
+
+    // Fallback: for sessions with 0 orders, try to find orders by table+time window
+    // This handles legacy data where orders may have wrong session_ids
+    const emptySessions = allSessions.filter(s => !(sessionOrdersMap.get(s.id) && sessionOrdersMap.get(s.id).length > 0));
+    if (emptySessions.length > 0 && USE_DB) {
+      console.log(`[SESSION HISTORY] ${emptySessions.length} sessions have 0 orders, trying table+time fallback`);
+      for (const s of emptySessions) {
+        const sessionTime = new Date(s.created_at);
+        const windowStart = new Date(sessionTime.getTime() - 2 * 60 * 60 * 1000).toISOString();
+        const windowEnd = s.settled_at
+          ? new Date(new Date(s.settled_at).getTime() + 2 * 60 * 60 * 1000).toISOString()
+          : new Date().toISOString();
+        const { data: fallbackOrders } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('"table"', s.table)
+          .gte('timestamp', windowStart)
+          .lte('timestamp', windowEnd)
+          .order('timestamp', { ascending: true })
+          .limit(500);
+        if (fallbackOrders && fallbackOrders.length > 0) {
+          console.log(`[SESSION HISTORY] Fallback found ${fallbackOrders.length} orders for session ${s.id} (table ${s.table})`);
+          sessionOrdersMap.set(s.id, fallbackOrders.map(o => {
+            const meta = orderMeta.get(o.id);
+            return meta ? { ...o, ...meta } : o;
+          }));
+        }
+      }
+    }
+
+    // Build response
+    let result = allSessions
+      .filter(s => !filteredSessionIds || filteredSessionIds.has(s.id))
+      .map(s => {
+        const orders = sessionOrdersMap.get(s.id) || [];
+        const nonCancelled = orders.filter(o => o.order_status !== 'CANCELLED');
+        const completed = orders.filter(o => o.order_status === 'COMPLETED');
+        const cancelled = orders.filter(o => o.order_status === 'CANCELLED');
+        const pending = orders.filter(o => o.order_status === 'PENDING');
+        const totalAll = orders.reduce((sum, o) => sum + Number(o.total), 0);
+        const totalNonCancelled = nonCancelled.reduce((sum, o) => sum + Number(o.total), 0);
+
+        // Determine session display status
+        let displayStatus = s.status;
+        if (s.status === 'SETTLED') {
+          displayStatus = 'SETTLED';
+        } else if (orders.length === 0) {
+          displayStatus = 'EMPTY';
+        } else if (nonCancelled.length === 0) {
+          displayStatus = 'ALL_CANCELLED';
+        }
+
+        // Get bill info from pre-fetched map
+        const billInfo = billMap.get(s.id) || null;
+
+        return {
+          session_id: s.id,
+          table: s.table,
+          status: displayStatus,
+          original_status: s.status,
+          created_at: s.created_at,
+          settled_at: s.settled_at,
+          total_amount: s.total_amount,
+          payment_method: s.payment_method,
+          order_count: orders.length,
+          total: totalNonCancelled,
+          total_with_cancelled: totalAll,
+          completed_count: completed.length,
+          cancelled_count: cancelled.length,
+          pending_count: pending.length,
+          orders: orders,
+          bill: billInfo
+        };
+      });
+
+    // Sort by created_at descending
+    result.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    console.log(`[SESSION HISTORY] Returning ${result.length} sessions`);
+    return res.json(result);
+  }
+
+  // Fallback: in-memory
+  let sessions = [...db.table_sessions];
+  if (status && status !== 'ALL') {
+    sessions = sessions.filter(s => s.status === status);
+  }
+
+  let filteredSessionIds = null;
+  if (date) {
+    const dateOrderSessionIds = new Set(
+      db.orders.filter(o => o.date === date).map(o => o.session_id).filter(Boolean)
+    );
+    filteredSessionIds = dateOrderSessionIds;
+  }
+
+  const result = sessions
+    .filter(s => !filteredSessionIds || filteredSessionIds.has(s.id))
+    .map(s => {
+      const orders = db.orders.filter(o => o.session_id === s.id);
+      const nonCancelled = orders.filter(o => o.order_status !== 'CANCELLED');
+      const completed = orders.filter(o => o.order_status === 'COMPLETED');
+      const cancelled = orders.filter(o => o.order_status === 'CANCELLED');
+      const pending = orders.filter(o => o.order_status === 'PENDING');
+      const totalAll = orders.reduce((sum, o) => sum + o.total, 0);
+      const totalNonCancelled = nonCancelled.reduce((sum, o) => sum + o.total, 0);
+
+      let displayStatus = s.status;
+      if (s.status === 'SETTLED') displayStatus = 'SETTLED';
+      else if (orders.length === 0) displayStatus = 'EMPTY';
+      else if (nonCancelled.length === 0) displayStatus = 'ALL_CANCELLED';
+
+      let billInfo = null;
+      if (s.status === 'SETTLED') {
+        billInfo = db.bills.find(b => b.session_id === s.id) || null;
+      }
+
+      return {
+        session_id: s.id,
+        table: s.table,
+        status: displayStatus,
+        original_status: s.status,
+        created_at: s.created_at,
+        settled_at: s.settled_at,
+        total_amount: s.total_amount,
+        payment_method: s.payment_method,
+        order_count: orders.length,
+        total: totalNonCancelled,
+        total_with_cancelled: totalAll,
+        completed_count: completed.length,
+        cancelled_count: cancelled.length,
+        pending_count: pending.length,
+        orders: orders.map(o => {
+          const meta = orderMeta.get(o.id);
+          return meta ? { ...o, ...meta } : o;
+        }),
+        bill: billInfo
+      };
+    })
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  res.json(result);
+}));
+
+// ===========================
+// SESSION DETAIL — full timeline for a specific session
+// ===========================
+app.get('/api/sessions/:sessionId', authMiddleware, asyncWrap(async (req, res) => {
+  const sessionId = req.params.sessionId;    console.log(`[SESSION DETAIL] Request for session: ${sessionId}`);
+
+  if (USE_DB) {
+    const { data: session, error: sErr } = await supabase.from('table_sessions').select('*').eq('id', sessionId).single();
+    console.log(`[SESSION DETAIL] Session query result: ${session ? 'found ' + session.id : 'null'}, error: ${sErr ? sErr.message : 'none'}`);
+    if (sErr) {
+      console.error('[SESSION DETAIL] Session query error:', sErr.message);
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const { data: orders, error: oErr } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('timestamp', { ascending: true })
+      .limit(500);
+    if (oErr) console.error('[SESSION DETAIL] Orders query error:', oErr.message);
+    console.log(`[SESSION DETAIL] Orders for session ${sessionId}: ${(orders || []).length} found`);
+    (orders || []).forEach(o => console.log(`[SESSION DETAIL]   Order ${o.id} session_id=${o.session_id} status=${o.order_status} \u20B9${o.total}`));
+
+    // Fallback: if 0 orders found by session_id, search by table + time window
+    // This handles legacy data where orders may have wrong session_ids
+    let finalOrders = orders || [];
+    if (finalOrders.length === 0 && session && session.table) {
+      console.log(`[SESSION DETAIL] No orders by session_id, trying table+time fallback for table ${session.table}`);
+      const sessionTime = new Date(session.created_at);
+      const windowStart = new Date(sessionTime.getTime() - 2 * 60 * 60 * 1000).toISOString(); // 2h before
+      const windowEnd = session.settled_at
+        ? new Date(new Date(session.settled_at).getTime() + 2 * 60 * 60 * 1000).toISOString() // 2h after settle
+        : new Date().toISOString();
+      const { data: tableOrders } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('"table"', session.table)
+        .gte('timestamp', windowStart)
+        .lte('timestamp', windowEnd)
+        .order('timestamp', { ascending: true })
+        .limit(500);
+      if (tableOrders && tableOrders.length > 0) {
+        console.log(`[SESSION DETAIL] Fallback found ${tableOrders.length} orders by table+time`);
+        finalOrders = tableOrders;
+      }
+    }
+
+    let billInfo = null;
+    if (session.status === 'SETTLED') {
+      const { data: bill } = await supabase.from('bills').select('*').eq('session_id', sessionId).maybeSingle();
+      billInfo = bill;
+    }
+
+    const enrichedOrders = finalOrders.map(o => {
+      const meta = orderMeta.get(o.id);
+      return meta ? { ...o, ...meta } : o;
+    });
+    console.log(`[SESSION DETAIL] Returning ${enrichedOrders.length} orders for session ${sessionId}`);
+
+    return res.json({
+      session,
+      orders: enrichedOrders,
+      bill: billInfo
+    });
+  }
+
+  // Fallback: in-memory
+  const session = db.table_sessions.find(s => s.id === sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const orders = db.orders
+    .filter(o => o.session_id === sessionId)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    .map(o => {
+      const meta = orderMeta.get(o.id);
+      return meta ? { ...o, ...meta } : o;
+    });
+
+  let billInfo = null;
+  if (session.status === 'SETTLED') {
+    billInfo = db.bills.find(b => b.session_id === sessionId) || null;
+  }
+
+  res.json({ session, orders, bill: billInfo });
+}));
+
+// ===========================
+// DELETE SESSION — permanently remove all orders/bills/payments for a session
+// ===========================
+app.delete('/api/sessions/:sessionId', authMiddleware, asyncWrap(async (req, res) => {
+  const sessionId = req.params.sessionId;
+  console.log(`[SESSION DELETE] Request to delete session: ${sessionId}`);
+
+  if (USE_DB) {
+    // Verify session exists
+    const { data: session, error: sErr } = await supabase
+      .from('table_sessions').select('*').eq('id', sessionId).single();
+    if (sErr || !session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // 1. Delete orders for this session
+    const { error: delOrdersErr } = await supabase
+      .from('orders').delete().eq('session_id', sessionId);
+    if (delOrdersErr) {
+      console.error('[SESSION DELETE] Failed to delete orders:', delOrdersErr.message);
+      return res.status(500).json({ error: 'Failed to delete orders: ' + delOrdersErr.message });
+    }
+    console.log(`[SESSION DELETE] Deleted orders for session ${sessionId}`);
+
+    // 2. Delete bills for this session
+    const { error: delBillsErr } = await supabase
+      .from('bills').delete().eq('session_id', sessionId);
+    if (delBillsErr) {
+      console.error('[SESSION DELETE] Failed to delete bills:', delBillsErr.message);
+    } else {
+      console.log(`[SESSION DELETE] Deleted bills for session ${sessionId}`);
+    }
+
+    // 3. Delete payments for this session
+    const { error: delPayErr } = await supabase
+      .from('payments').delete().eq('session_id', sessionId);
+    if (delPayErr) {
+      console.error('[SESSION DELETE] Failed to delete payments:', delPayErr.message);
+    } else {
+      console.log(`[SESSION DELETE] Deleted payments for session ${sessionId}`);
+    }
+
+    // 4. Delete the session itself
+    const { error: delSessionErr } = await supabase
+      .from('table_sessions').delete().eq('id', sessionId);
+    if (delSessionErr) {
+      console.error('[SESSION DELETE] Failed to delete session:', delSessionErr.message);
+      return res.status(500).json({ error: 'Failed to delete session: ' + delSessionErr.message });
+    }
+    console.log(`[SESSION DELETE] Deleted session ${sessionId} (table ${session.table})`);
+
+    broadcastSSE('session_deleted', { session_id: sessionId, table: session.table });
+    return res.json({ success: true });
+  }
+
+  // In-memory fallback
+  const idx = db.table_sessions.findIndex(s => s.id === sessionId);
+  if (idx === -1) return res.status(404).json({ error: 'Session not found' });
+  const session = db.table_sessions[idx];
+
+  // Delete orders, bills, payments for this session
+  db.orders = db.orders.filter(o => o.session_id !== sessionId);
+  db.bills = db.bills.filter(b => b.session_id !== sessionId);
+  db.payments = db.payments.filter(p => p.session_id !== sessionId);
+  db.table_sessions.splice(idx, 1);
+
+  console.log(`[SESSION DELETE] Deleted session ${sessionId} (table ${session.table})`);
+  broadcastSSE('session_deleted', { session_id: sessionId, table: session.table });
+  res.json({ success: true });
+}));
 
 // ===========================
 // CATCH-ALL — serve index.html for SPA routes

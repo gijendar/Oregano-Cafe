@@ -15,6 +15,35 @@ let cartIdCounter = 0;
 let currentOrderType = 'dine-in';
 let currentDeliveryRegion = null;
 
+// IST Timezone Utility (Asia/Kolkata, UTC+05:30)
+const IST_OFFSET = 5.5 * 60 * 60 * 1000; // +05:30 in ms
+function getISTDate(date) {
+  const d = date || new Date();
+  const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+  return new Date(utc + IST_OFFSET);
+}
+function formatISTDateTime(date) {
+  const d = getISTDate(date);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  let hours = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return { date: dd + '/' + mm + '/' + yyyy, time: String(hours).padStart(2, '0') + ':' + min + ' ' + ampm + ' IST' };
+}
+function formatISTDate(date) {
+  return formatISTDateTime(date).date;
+}
+function formatISTTime(date) {
+  return formatISTDateTime(date).time;
+}
+function formatISTFull(date) {
+  const { date: d, time: t } = formatISTDateTime(date);
+  return d + ', ' + t;
+}
+
 // ===========================
 // API CONFIG
 // ===========================
@@ -65,6 +94,18 @@ async function loadExpenses() {
   try { return JSON.parse(localStorage.getItem('toc_expenses'))||[] } catch(e){ return [] }
 }
 function saveExpenses(e){ localStorage.setItem('toc_expenses',JSON.stringify(e)) }
+async function loadBills() {
+  const apiData = await apiCall('GET', '/bills');
+  if (apiData !== null) return apiData;
+  try { return JSON.parse(localStorage.getItem('toc_bills'))||[] } catch(e){ return [] }
+}
+function saveBills(b){ localStorage.setItem('toc_bills',JSON.stringify(b)) }
+async function getBill(billNumber) {
+  const apiData = await apiCall('GET', '/bills/' + billNumber);
+  if (apiData !== null) return apiData;
+  const bills = await loadBills();
+  return bills.find(b => b.bill_number === billNumber) || null;
+}
 function loadAdminAuth(){ return localStorage.getItem('toc_admin_auth')==='true' }
 function saveAdminAuth(v){ localStorage.setItem('toc_admin_auth',v?'true':'false') }
 function setApiToken(t){ API_TOKEN=t; localStorage.setItem('toc_api_token',t); }
@@ -103,22 +144,14 @@ if(!isAdminPage){
     const v=Number(tableParam);
     if(Number.isInteger(v) && v>=1 && v<=TOTAL_TABLES){
       currentTable=v;
-      $('tableInput').value=v;
-      showOrderTypeSelector();
+      currentOrderType='dine-in';
+      showMenu();
     } else {
-      // Invalid table in URL - show error but don't proceed
       $('tableError').textContent = 'Please enter a table number between 1-' + TOTAL_TABLES + '.';
       $('tableError').classList.add('show');
     }
   }
   $('continueBtn').addEventListener('click',()=>{
-    const orderTypeSelected=currentOrderType && $('orderTypeSelect').style.display==='block';
-    if(orderTypeSelected){
-      // Order type + region already selected, proceed to menu
-      $('tableError').classList.remove('show');
-      showMenu();
-      return;
-    }
     const v=Number($('tableInput').value);
     if(!Number.isInteger(v) || v<1 || v>TOTAL_TABLES){
       $('tableError').textContent = 'Please enter a table number between 1-' + TOTAL_TABLES + '.';
@@ -127,17 +160,12 @@ if(!isAdminPage){
     }
     $('tableError').classList.remove('show');
     currentTable=v;
-    showOrderTypeSelector();
+    currentOrderType='dine-in';
+    showMenu();
   });
-  // Show order type selector after table entered
-  function showOrderTypeSelector(){
-    $('orderTypeSelect').style.display='block';
-    $('continueBtn').textContent='CONTINUE';
-    buildRegionOptions();
-  }
   $('tableInput').addEventListener('keydown',e=>{ if(e.key==='Enter') $('continueBtn').click() });
   $('tableBadge').addEventListener('click',()=>{
-    if(confirm('Change table number or order type?')){
+    if(confirm('Change table number?')){
       currentTable=null; cart=[]; currentOrderType='dine-in'; currentDeliveryRegion=null;
       $('landing').classList.remove('hidden');
       $('mainContent').classList.remove('active');
@@ -146,9 +174,6 @@ if(!isAdminPage){
       $('floatingCart').classList.remove('show');
       $('tableInput').value='';
       $('tableInput').focus();
-      $('orderTypeSelect').style.display='none';
-      $('regionMap').style.display='none';
-      $('continueBtn').textContent='VIEW MENU';
       $('tableError').classList.remove('show');
     }
   });
@@ -161,63 +186,14 @@ function showMenu(){
   $('mainContent').classList.add('active');
   $('header').style.display='flex';
   $('footer').style.display='block';
-  const typeLabel=currentOrderType==='dine-in'?'Dine In':currentOrderType==='takeaway'?'Takeaway':'Delivery';
-  $('tableBadge').textContent='TABLE '+currentTable+' · '+typeLabel;
-  $('cartTableLabel').textContent='TABLE '+currentTable+' · '+typeLabel;
-  if(currentOrderType==='delivery' && currentDeliveryRegion){
-    $('tableBadge').textContent+=' · '+currentDeliveryRegion.name;
-    $('cartTableLabel').textContent+=' · '+currentDeliveryRegion.name;
-  }
+  $('tableBadge').textContent='TABLE '+currentTable;
+  $('cartTableLabel').textContent='TABLE '+currentTable;
   buildCategories();
   buildMenu();
   updateCart();
 }
 
-// Order type selection
-function selectOrderType(btn){
-  document.querySelectorAll('.order-type-option').forEach(o=>o.classList.remove('active'));
-  btn.classList.add('active');
-  currentOrderType=btn.dataset.type;
-  const regionMap=$('regionMap');
-  if(currentOrderType==='delivery'){
-    regionMap.style.display='block';
-    if(!currentDeliveryRegion) selectRegion($('#regionOptions .region-option')[0]);
-  } else {
-    regionMap.style.display='none';
-    currentDeliveryRegion=null;
-  }
-}
 
-function buildRegionOptions(){
-  const regions=[
-    {name:'Central City',dist:'0-2 km'},
-    {name:'West End',dist:'2-4 km'},
-    {name:'East Side',dist:'2-5 km'},
-    {name:'North Park',dist:'1-3 km'},
-    {name:'South Bazaar',dist:'3-6 km'},
-    {name:'Old Town',dist:'1-4 km'},
-    {name:'University Area',dist:'0-3 km'},
-    {name:'Industrial Zone',dist:'4-8 km'}
-  ];
-  const container=$('regionOptions');
-  container.innerHTML='';
-  regions.forEach((r,i)=>{
-    const div=document.createElement('div');
-    div.className='region-option'+(i===0?' active':'');
-    div.innerHTML='<span class="region-option-name">'+r.name+'</span><span class="region-option-dist">'+r.dist+' · Free</span>';
-    div.onclick=()=>selectRegion(div);
-    container.appendChild(div);
-  });
-}
-
-function selectRegion(el){
-  document.querySelectorAll('.region-option').forEach(o=>o.classList.remove('active'));
-  el.classList.add('active');
-  currentDeliveryRegion={
-    name:el.querySelector('.region-option-name').textContent,
-    dist:el.querySelector('.region-option-dist').textContent
-  };
-}
 
 // ===========================
 // CATEGORIES
