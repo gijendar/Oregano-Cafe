@@ -428,7 +428,7 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
 .btn-logout:hover{background:rgba(192,57,43,0.15)}
 @media(max-width:768px){.admin-sidebar{transform:translateX(-100%)}.admin-sidebar.open{transform:translateX(0)}.admin-main{margin-left:0;padding:16px}.admin-main::before{left:0}.admin-main::after{left:0}.admin-hamburger{display:flex}.stat-cards{grid-template-columns:repeat(2,1fr)}}
 
-/* PRINT STYLES — BILL ONLY */
+/* PRINT STYLES — BILL ONLY (nothing else — no sidebar, nav or background) */
 @media print {
   body * { visibility: hidden !important; }
   #printableBill, #printableBill * { visibility: visible !important; }
@@ -450,11 +450,8 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
   #printableBill .bill-view-header {
     border-bottom: 2px double #E8DDCC !important;
   }
-  #printableBill .bill-view-header h2 {
-    font-size: 24px !important;
-    letter-spacing: 2px !important;
-  }
-  .admin-sidebar, .admin-main::before, .admin-main::after, .admin-topbar, .btn-settle, .btn-view, .btn-settle, [onclick*="printBill"], [onclick*="renderAdminSection"] {
+  #printableBill .bill-no-print { display: none !important; }
+  .admin-sidebar, .admin-main::before, .admin-main::after, .admin-topbar, .btn-settle, .btn-view, [onclick*="printBill"], [onclick*="renderAdminSection"], .modal-overlay, .modal-admin-overlay, .confirm-admin-overlay {
     display: none !important;
     visibility: hidden !important;
   }
@@ -462,6 +459,76 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
     size: portrait;
     margin: 15mm;
   }
+}
+
+/* ═══ PREMIUM RECEIPT BILL (print-ready) ═══ */
+.receipt-bill{position:relative;background:#FCF9F3;border:1px solid #E8DDCC;border-radius:3px;padding:40px 36px 32px;max-width:520px;margin:0 auto;box-shadow:0 2px 6px rgba(43,33,27,0.04),0 12px 40px rgba(43,33,27,0.06);font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:#2B211B;line-height:1.6;letter-spacing:.15px;overflow:hidden}
+.receipt-bill::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#243B2A,#B89A5A,#243B2A)}
+.receipt-bill .rb-botanical-tl,.receipt-bill .rb-botanical-br{position:absolute;font-size:32px;opacity:.04;color:#243B2A;line-height:1;pointer-events:none}
+.receipt-bill .rb-botanical-tl{top:12px;left:14px;transform:rotate(-15deg)}
+.receipt-bill .rb-botanical-br{bottom:12px;right:14px;transform:rotate(165deg)}
+.receipt-bill .rb-header{text-align:center;padding-bottom:24px;margin-bottom:20px;position:relative}
+.receipt-bill .rb-header::before{content:'';display:block;width:100%;height:1px;position:absolute;bottom:0;left:0;background:linear-gradient(90deg,transparent,#E8DDCC,transparent)}
+.receipt-bill .rb-stars{font-size:7px;letter-spacing:8px;color:#B89A5A;margin-bottom:10px;font-weight:300}
+.receipt-bill .rb-cafe{font-family:'DM Serif Display','Cormorant Garamond',serif;font-size:24px;color:#243B2A;letter-spacing:4px;margin:0 0 4px;font-weight:400}
+.receipt-bill .rb-tag{font-size:8px;font-weight:500;letter-spacing:3px;color:#B89A5A;text-transform:uppercase}
+.receipt-bill .rb-section-title{font-family:'DM Serif Display','Cormorant Garamond',serif;font-size:11px;font-weight:400;letter-spacing:3px;color:#243B2A;text-transform:uppercase;text-align:center;margin:24px 0 14px;position:relative}
+.receipt-bill .rb-section-title::before,.receipt-bill .rb-section-title::after{content:'';position:absolute;top:50%;width:28%;height:1px;background:linear-gradient(90deg,transparent,#B89A5A)}
+.receipt-bill .rb-section-title::before{left:0;background:linear-gradient(90deg,transparent,#B89A5A)}
+.receipt-bill .rb-section-title::after{right:0;background:linear-gradient(90deg,#B89A5A,transparent)}
+.receipt-bill .rb-meta{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:16px 14px;margin:0 0 4px;border:1px solid rgba(232,221,204,0.6);border-radius:2px;background:rgba(247,241,231,0.3)}
+.receipt-bill .rb-meta div{padding:7px 0}
+.receipt-bill .rb-meta span{display:block;font-size:7.5px;font-weight:700;letter-spacing:2.5px;color:#7A756D;text-transform:uppercase;margin-bottom:2px}
+.receipt-bill .rb-meta strong{display:block;font-size:12px;color:#2B211B;font-weight:600;letter-spacing:.3px}
+.receipt-bill .rb-table{width:100%;border-collapse:collapse;font-size:11.5px;margin:0 0 2px}
+.receipt-bill .rb-table th{text-align:left;padding:0 4px 10px;font-size:7px;font-weight:700;letter-spacing:2.5px;color:#7A756D;text-transform:uppercase;border-bottom:2px solid #243B2A}
+.receipt-bill .rb-table th.rb-th-num,.receipt-bill .rb-table td.rb-td-num{text-align:center;width:40px}
+.receipt-bill .rb-table th.amt,.receipt-bill .rb-table td.amt{text-align:right;width:72px}
+.receipt-bill .rb-table td{padding:10px 4px;border-bottom:1px solid rgba(232,221,204,0.5);color:#2B211B;vertical-align:top}
+.receipt-bill .rb-table td:first-child{font-weight:500;padding-right:8px}
+.receipt-bill .rb-table td .item-opts{display:block;font-size:9.5px;color:#7A756D;margin-top:3px;font-style:italic}
+.receipt-bill .rb-table tbody tr:last-child td{border-bottom:none}
+.receipt-bill .rb-totals{padding:8px 0 0}
+.receipt-bill .rb-trow{display:flex;justify-content:space-between;padding:4px 4px;font-size:11.5px;color:#7A756D}
+.receipt-bill .rb-trow.grand{font-family:'DM Serif Display','Cormorant Garamond',serif;font-size:0;border-top:2px solid #243B2A;margin-top:12px;padding:14px 4px 8px;background:linear-gradient(180deg,rgba(36,59,42,0.03),transparent);border-bottom:1px solid #B89A5A}
+.receipt-bill .rb-trow.grand span:first-child{font-size:10px;font-weight:700;letter-spacing:2.5px;color:#243B2A;font-family:'Inter',sans-serif;text-transform:uppercase;align-self:center}
+.receipt-bill .rb-trow.grand span:last-child{font-family:'DM Serif Display','Cormorant Garamond',serif;font-size:24px;color:#243B2A;font-weight:400;letter-spacing:1px}
+.receipt-bill .rb-paystatus{text-align:center;margin:20px 0 0;padding:18px 14px;border:1px solid rgba(232,221,204,0.7);border-radius:2px;background:rgba(247,241,231,0.3)}
+.receipt-bill .rb-paystatus .rb-ps-label{font-size:7px;font-weight:700;letter-spacing:3.5px;color:#7A756D;text-transform:uppercase;margin-bottom:6px}
+.receipt-bill .rb-paystatus .rb-ps-value{font-family:'DM Serif Display','Cormorant Garamond',serif;font-size:18px;margin-top:2px;letter-spacing:2px}
+.receipt-bill .rb-paystatus .rb-ps-sub{font-size:10px;color:#7A756D;margin-top:6px;font-style:italic;line-height:1.4}
+.receipt-bill .rb-paystatus.unpaid .rb-ps-value{color:#7A756D}
+.receipt-bill .rb-paystatus.paid .rb-ps-value{color:#243B2A}
+.receipt-bill .rb-paystatus.paid .rb-ps-check{display:inline-block;width:18px;height:18px;border-radius:50%;background:#243B2A;color:#FCF9F3;font-size:11px;line-height:18px;text-align:center;margin-right:8px;vertical-align:middle;font-weight:700}
+.receipt-bill .rb-paymethod{margin-top:0;padding:16px 14px;border:1px solid rgba(232,221,204,0.6);border-radius:2px;border-top:none;background:rgba(247,241,231,0.2)}
+.receipt-bill .rb-paymethod .rb-pm-row{display:flex;justify-content:space-between;padding:6px 0;font-size:11.5px;color:#7A756D;border-bottom:1px solid rgba(232,221,204,0.4)}
+.receipt-bill .rb-paymethod .rb-pm-row:last-child{border-bottom:none}
+.receipt-bill .rb-paymethod .rb-pm-row strong{color:#2B211B;font-weight:600}
+.receipt-bill .rb-paymethod .rb-pm-row.rb-pm-total{border-top:1.5px solid #243B2A;border-bottom:none;margin-top:6px;padding-top:10px}
+.receipt-bill .rb-paymethod .rb-pm-row.rb-pm-total span{font-weight:700;color:#243B2A;letter-spacing:1px;font-size:10px;text-transform:uppercase}
+.receipt-bill .rb-paymethod .rb-pm-row.rb-pm-total strong{font-size:15px;color:#243B2A;font-weight:700}
+.receipt-bill .rb-paymethod .rb-pm-row.rb-pm-paidat{border-bottom:none;font-size:10.5px;color:#9BA58B}
+.receipt-bill .rb-thanks{text-align:center;padding-top:20px;margin-top:16px;border-top:1px solid #E8DDCC;position:relative}
+.receipt-bill .rb-thanks::before{content:'\2736';position:absolute;top:-5px;left:50%;transform:translateX(-50%);font-size:8px;color:#B89A5A;background:#FCF9F3;padding:0 8px}
+.receipt-bill .rb-thanks .rb-thanks-msg{font-family:'Cormorant Garamond',serif;font-size:14px;font-style:italic;color:#7A756D;margin-bottom:6px;letter-spacing:.5px}
+.receipt-bill .rb-thanks .rb-thanks-brand{font-family:'DM Serif Display',serif;font-size:10px;letter-spacing:3px;color:#243B2A;margin-bottom:4px}
+.receipt-bill .rb-thanks .rb-thanks-tagline{font-size:7.5px;letter-spacing:2.5px;color:#B89A5A;font-weight:500;text-transform:uppercase}
+@media print{
+  .receipt-bill{max-width:100%;box-shadow:none;border-color:#E8DDCC;padding:24px 20px 20px;background:#FCF9F3}
+  .receipt-bill::before{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .receipt-bill .rb-cafe{font-size:20px}
+  .receipt-bill .rb-header{padding-bottom:18px;margin-bottom:16px}
+  .receipt-bill .rb-meta{padding:12px 10px}
+  .receipt-bill .rb-meta span{font-size:7px}
+  .receipt-bill .rb-meta strong{font-size:11px}
+  .receipt-bill .rb-table td{padding:7px 4px;font-size:10.5px}
+  .receipt-bill .rb-table th{font-size:6.5px;padding-bottom:7px}
+  .receipt-bill .rb-trow.grand{padding:12px 4px 6px}
+  .receipt-bill .rb-trow.grand span:first-child{font-size:9px}
+  .receipt-bill .rb-trow.grand span:last-child{font-size:20px}
+  .receipt-bill .rb-paystatus{margin-top:14px;padding:12px 10px}
+  .receipt-bill .rb-paymethod{padding:12px 10px}
+  .receipt-bill .rb-thanks{padding-top:16px;margin-top:12px}
 }
 </style>
 </head>
@@ -493,6 +560,7 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
     <div class="table-badge" id="tableBadge" title="Click to change table">TABLE —</div>
   </div>
   <div class="header-actions">
+    <button id="myBillBtn" aria-label="View my bill" title="View my bill" style="font-size:10px;font-weight:700;letter-spacing:1px;color:var(--forest);border:1px solid var(--border);border-radius:20px;padding:8px 12px;background:var(--ivory);text-transform:uppercase">MY BILL</button>
     <button id="searchToggleBtn" aria-label="Search menu"><svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
     <button id="cartToggleBtn" aria-label="View cart"><svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg><span class="cart-badge" id="cartBadge" style="display:none;">0</span></button>
   </div>
@@ -580,12 +648,17 @@ h1,h2,h3{font-family:'DM Serif Display','Cormorant Garamond',serif;font-weight:4
 <!-- ORDER CONFIRMATION -->
 <div class="confirm-overlay" id="confirmOverlay"><div class="confirm-box" id="confirmBox"></div></div>
 
+<!-- CUSTOMER BILL VIEW (verification before payment) -->
+<div class="modal-overlay" id="myBillOverlay" style="z-index:450;align-items:center">
+  <div class="modal-content" id="myBillContent" style="max-width:560px;border-radius:var(--radius-xl)"></div>
+</div>
+
 <!-- ADMIN LOGIN -->
 <div class="admin-login-page" id="adminLoginPage" style="display:none;">
   <div class="admin-login-box">
     <h2>THE OREGANO CAFE</h2>
     <p class="admin-sub">ADMIN PORTAL</p>
-    <div class="field"><label>Email / Username</label><input type="text" id="adminEmail" placeholder="admin@oreganocafe.com"></div>
+    <div class="field"><label>Username</label><input type="text" id="adminEmail" placeholder="Enter admin username" autocomplete="username"></div>
     <div class="field"><label>Password</label><input type="password" id="adminPassword" placeholder="••••••••"></div>
     <p class="admin-error" id="adminError">Invalid credentials. Please try again.</p>
     <button class="admin-btn" id="adminLoginBtn">LOGIN</button>
@@ -965,5 +1038,6 @@ const MENU=[
 </script>
 <script src="customer.js"></script>
 <script src="admin.js"></script>
+<script>if (window.location.hash === '#e2e') { document.write('<script src="e2e-harness.js"><\/script>'); }</script>
 </body>
 </html>

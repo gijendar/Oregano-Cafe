@@ -8,6 +8,7 @@ let sseSource = null;
 let selectedPaymentMethod = null;
 let currentTableBillNum = null;
 let currentBillTotal = 0; // authoritative total for SPLIT validation (from server)
+let currentBillNumber = null; // bill currently being processed
 
 // Validate a SPLIT payment client-side. Mirrors the server rule:
 // cash_amount + online_amount MUST equal the bill total exactly.
@@ -102,7 +103,12 @@ function connectSSE() {
   });
   sseSource.addEventListener('table_paid', e => {
     console.log('[SSE] table_paid received, refreshing current section:', currentAdminSection);
-    showToast('💰 Table payment settled!');
+    showToast('💰 Payment recorded!');
+    renderAdminSection(currentAdminSection).catch(() => {});
+  });
+  sseSource.addEventListener('bill_generated', e => {
+    console.log('[SSE] bill_generated received, refreshing current section:', currentAdminSection);
+    showToast('🧾 New bill in queue');
     renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('session_deleted', e => {
@@ -872,11 +878,90 @@ async function renderTables(el, orders) {
   el.innerHTML = html;
 }
 
+// ===========================
+// PREMIUM RECEIPT BUILDER (shared — customer + admin bills)
+// UNPAID bills show "PAYMENT: NOT PAID" and never a payment method.
+// ===========================
+function receiptBillHTML(bill) {
+  const unpaid = (bill.payment_status || 'UNPAID') !== 'PAID';
+  const items = bill.items && bill.items.length ? bill.items : (bill.orders || []).reduce((acc, o) => acc.concat((o.items || []).map(it => ({ name: it.name, qty: it.qty, price: it.price, options: it.options || [] }))), []);
+  let rows = '';
+  let idx = 0;
+  items.forEach(it => {
+    idx++;
+    const opts = it.options && it.options.length ? '<span class="item-opts">' + it.options.join(', ') + '</span>' : '';
+    rows += '<tr>' +
+      '<td class="rb-td-num">' + idx + '</td>' +
+      '<td>' + it.name + opts + '</td>' +
+      '<td class="num">' + it.qty + '</td>' +
+      '<td class="amt">' + formatPrice(it.price) + '</td>' +
+      '<td class="amt">' + formatPrice(it.price * it.qty) + '</td>' +
+    '</tr>';
+  });
+  const billDate = bill.bill_date || bill.payment_date || '';
+  const billTime = bill.bill_time || bill.payment_time || '';
+  let paySection;
+  if (unpaid) {
+    paySection = '<div class="rb-paystatus unpaid">' +
+      '<div class="rb-ps-label">Payment Status</div>' +
+      '<div class="rb-ps-value">UNPAID</div>' +
+      '<div class="rb-ps-sub">Awaiting payment at counter.</div>' +
+    '</div>';
+  } else {
+    paySection = '<div class="rb-paystatus paid">' +
+      '<div class="rb-ps-label">Payment Status</div>' +
+      '<div class="rb-ps-value"><span class="rb-ps-check">\u2713</span>PAID</div>' +
+    '</div>' +
+    '<div class="rb-paymethod">' +
+      (bill.payment_method === 'SPLIT' ?
+        '<div class="rb-pm-row"><span>Cash Paid</span><strong>' + formatPrice(bill.cash_amount || 0) + '</strong></div>' +
+        '<div class="rb-pm-row"><span>Online Paid</span><strong>' + formatPrice(bill.online_amount || 0) + '</strong></div>' :
+        bill.payment_method === 'CASH' ?
+        '<div class="rb-pm-row"><span>Cash Paid</span><strong>' + formatPrice(bill.cash_amount || bill.total || 0) + '</strong></div>' :
+        '<div class="rb-pm-row"><span>Online Paid</span><strong>' + formatPrice(bill.online_amount || bill.total || 0) + '</strong></div>'
+      ) +
+      '<div class="rb-pm-row rb-pm-total"><span>Total Paid</span><strong>' + formatPrice(bill.total) + '</strong></div>' +
+      (bill.paid_at || bill.payment_date ? '<div class="rb-pm-row rb-pm-paidat"><span>Paid At</span><strong>' + (bill.payment_date || '') + (bill.payment_time ? ' \u00b7 ' + bill.payment_time : '') + '</strong></div>' : '') +
+    '</div>';
+  }
+  return '<div class="receipt-bill" id="printableBill">' +
+    '<div class="rb-botanical-tl">\ud83c\udf3f</div>' +
+    '<div class="rb-botanical-br">\ud83c\udf3f</div>' +
+    '<div class="rb-header">' +
+      '<div class="rb-stars">\u2736  \u2736  \u2736</div>' +
+      '<div class="rb-cafe">THE OREGANO CAFE</div>' +
+      '<div class="rb-tag">Premium Cafe \u00b7 Est. 2019 \u00b7 Bhiwandi</div>' +
+    '</div>' +
+    '<div class="rb-section-title">Customer Bill</div>' +
+    '<div class="rb-meta">' +
+      '<div><span>Bill No.</span><strong>' + bill.bill_number + '</strong></div>' +
+      '<div><span>Table No.</span><strong>' + bill.table + '</strong></div>' +
+      '<div><span>Date</span><strong>' + billDate + '</strong></div>' +
+      '<div><span>Time</span><strong>' + billTime + '</strong></div>' +
+      (bill.session_id ? '<div><span>Session</span><strong>' + bill.session_id + '</strong></div>' : '') +
+    '</div>' +
+    '<table class="rb-table">' +
+      '<thead><tr><th class="rb-th-num">#</th><th>Item</th><th class="num">Qty</th><th class="amt">Price</th><th class="amt">Total</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>' +
+    '<div class="rb-totals">' +
+      '<div class="rb-trow"><span>Subtotal</span><span>' + formatPrice(bill.subtotal != null ? bill.subtotal : bill.total) + '</span></div>' +
+      '<div class="rb-trow grand"><span>TOTAL AMOUNT</span><span>' + formatPrice(bill.total) + '</span></div>' +
+    '</div>' +
+    paySection +
+    '<div class="rb-thanks">' +
+      '<div class="rb-thanks-msg">Thank you for dining with us.</div>' +
+      '<div class="rb-thanks-brand">THE OREGANO CAFE</div>' +
+      '<div class="rb-thanks-tagline">Good Food. Warm Moments. Beautifully Served.</div>' +
+    '</div>' +
+  '</div>';
+}
+
 async function viewTableBill(tableNum) {
   currentTableBillNum = tableNum;
   selectedPaymentMethod = null;
   const content = $('adminContent');
-  const result = await apiCall('GET', '/tables/' + tableNum + '/bill');
+  const result = await apiCall('GET', '/tables/' + tableNum + '/current-bill');
 
   if (!result || !result.session) {
     content.innerHTML = `
@@ -892,73 +977,94 @@ async function viewTableBill(tableNum) {
     return;
   }
 
-  const { session, orders: billOrders, total } = result;
-  currentBillTotal = Number(total) || 0;
+  const { session, bill } = result;
 
-  let ordersHTML = '';
-  if (billOrders.length === 0) {
-    ordersHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted)">No unpaid completed orders yet.</div>';
-  } else {
-    billOrders.forEach(o => {
-      ordersHTML += `
-        <div class="bill-order-item">
-          <div class="bill-order-id">${o.id}</div>
-          <div class="bill-order-time">${o.time}</div>
-          <div class="bill-order-items">${o.items.map(i => i.qty + ' × ' + i.name).join('<br>')}</div>
-          <div class="bill-order-total">${formatPrice(o.total)}</div>
-          <div class="bill-order-status">
-            <span class="status-badge status-completed">COMPLETED</span>
-            <span class="status-badge status-unpaid">UNPAID</span>
-          </div>
-        </div>
-      `;
+  if (!bill) {
+    // No generated bill yet — offer to generate one (NO payment method involved)
+    const total = Number(result.total) || 0;
+    let previewHTML = '';
+    (result.orders || []).forEach(o => {
+      previewHTML += '<div class="bill-order-item">' +
+        '<div class="bill-order-id">' + o.id + '</div>' +
+        '<div class="bill-order-time">' + (o.time || '') + '</div>' +
+        '<div class="bill-order-items">' + (o.items || []).map(i => i.qty + ' × ' + i.name).join('<br>') + '</div>' +
+        '<div class="bill-order-total">' + formatPrice(o.total) + '</div>' +
+      '</div>';
     });
+    content.innerHTML = `
+      <div style="margin-bottom:16px"><button class="btn-view" onclick="renderAdminSection('tables')">← Back to Tables</button></div>
+      <div class="bill-view">
+        <div class="bill-view-header">
+          <h2>THE OREGANO CAFE</h2>
+          <p>TABLE ${tableNum} — BILL NOT GENERATED</p>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Session: ${session.id}</div>
+        </div>
+        ${previewHTML || '<div class="admin-empty"><h3>NO COMPLETED ORDERS YET</h3><p>Complete an order first, then generate the bill.</p></div>'}
+        <div class="bill-total-section">
+          <div class="bill-total-label">TOTAL</div>
+          <div class="bill-total-amount">${formatPrice(total)}</div>
+        </div>
+        ${total > 0 ? `<button class="btn-settle" onclick="generateTableBill(${tableNum})">🧾 GENERATE BILL</button>` : ''}
+      </div>
+    `;
+    return;
   }
 
-  content.innerHTML = `
-    <div style="margin-bottom:16px"><button class="btn-view" onclick="renderAdminSection('tables')">← Back to Tables</button></div>
-    <div class="bill-view">
-      <div class="bill-view-header">
-        <h2>THE OREGANO CAFE</h2>
-        <p>TABLE ${tableNum} — CURRENT BILL</p>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Session: ${session.id}</div>
-      </div>
-      ${ordersHTML}
-      <div class="bill-total-section">
-        <div class="bill-total-label">TOTAL BILL</div>
-        <div class="bill-total-amount">${formatPrice(total)}</div>
-      </div>
-      ${total > 0 ? `
-        <div class="bill-payment-section">
-          <h4>PAYMENT METHOD</h4>
-          <div class="payment-options">
-            <div class="payment-option" id="payCash" onclick="selectPayment('CASH')">💵 CASH</div>
-            <div class="payment-option" id="payOnline" onclick="selectPayment('ONLINE')">📱 ONLINE</div>
-            <div class="payment-option" id="paySplit" onclick="selectPayment('SPLIT')">🔀 SPLIT PAYMENT</div>
-          </div>
-          <div id="splitPaymentForm" style="display:none;margin-top:16px;padding:16px;background:var(--warm-white);border-radius:var(--radius-md);border:1px solid var(--border)">
-            <div style="margin-bottom:12px;font-size:13px;color:var(--text-muted)">Total Due: <strong style="color:var(--espresso)">${formatPrice(total)}</strong></div>
-            <div class="field" style="margin-bottom:10px">
-              <label style="font-size:11px;font-weight:600;letter-spacing:1px;color:var(--charcoal)">CASH AMOUNT</label>
-              <input type="number" id="splitCash" placeholder="₹ 0" min="0" style="width:100%;padding:10px;border:2px solid var(--border);border-radius:var(--radius-md);background:#fff;font-size:14px">
-            </div>
-            <div class="field" style="margin-bottom:10px">
-              <label style="font-size:11px;font-weight:600;letter-spacing:1px;color:var(--charcoal)">ONLINE AMOUNT</label>
-              <input type="number" id="splitOnline" placeholder="₹ 0" min="0" style="width:100%;padding:10px;border:2px solid var(--border);border-radius:var(--radius-md);background:#fff;font-size:14px">
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-top:1px solid var(--border)">
-              <span>Total Paid</span><strong id="splitTotalPaid">₹0</strong>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--border)">
-              <span>Remaining</span><strong id="splitRemaining" style="color:var(--pending-amber)">${formatPrice(total)}</strong>
-            </div>
-            <div id="splitError" style="display:none;color:var(--cancelled-red);font-size:12px;margin-top:8px"></div>
-          </div>
-          <button class="btn-settle" id="settleBtn" onclick="settleTablePayment()" style="display:none;margin-top:12px">CONFIRM PAYMENT</button>
-        </div>
-      ` : '<div style="text-align:center;padding:24px;color:var(--text-muted)">No amount to settle.</div>'}
-    </div>
-  `;
+  // Bill exists (UNPAID or PAID) — premium receipt + payment actions
+  currentBillTotal = Number(bill.total) || 0;
+  currentBillNumber = bill.bill_number;
+  const isPaid = bill.payment_status === 'PAID';
+  content.innerHTML =
+    '<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn-view" onclick="renderAdminSection(\'tables\')">← Back to Tables</button><button class="btn-view" onclick="renderAdminSection(\'bills\')">BILL QUEUE →</button></div>' +
+    receiptBillHTML(bill) +
+    '<div class="bill-no-print" style="text-align:center;margin-top:20px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap">' +
+      '<button class="btn-view" onclick="printBill()" style="padding:14px 28px">🖨 PRINT (A4)</button>' +
+      '<button class="btn-view" onclick="printBill(\'thermal\')" style="padding:14px 28px">🧾 PRINT (80mm THERMAL)</button>' +
+      (!isPaid ? '<button class="btn-settle" onclick="openRecordPayment(' + tableNum + ')" style="width:auto;padding:14px 32px">RECORD PAYMENT</button>' : '') +
+    '</div>';
+}
+
+// Generate the bill (bill BEFORE payment — no payment method involved)
+async function generateTableBill(tableNum) {
+  const result = await apiCall('POST', '/tables/' + tableNum + '/generate-bill', {});
+  if (result && result.success) {
+    showToast('🧾 Bill ' + result.bill.bill_number + ' generated (UNPAID)');
+    viewTableBill(tableNum);
+  } else {
+    showToast((result && result.error) || 'Could not generate the bill.');
+  }
+}
+
+// ===========================
+// RECORD PAYMENT — admin records CASH / ONLINE / SPLIT AFTER bill generation
+// ===========================
+function openRecordPayment(tableNum) {
+  const total = Number(currentBillTotal) || 0;
+  if (!tableNum || total <= 0) { showToast('No payable amount on this bill.'); return; }
+  selectedPaymentMethod = null;
+  $('adminModalBox').innerHTML =
+    '<h3>RECORD PAYMENT — TABLE ' + tableNum + '</h3>' +
+    '<div style="display:flex;justify-content:space-between;padding:10px 0;margin-bottom:14px;border-bottom:2px solid var(--forest);font-size:15px"><span>Total Bill</span><strong style="font-family:\"DM Serif Display\",serif">' + formatPrice(total) + '</strong></div>' +
+    '<div class="payment-options" style="justify-content:flex-start">' +
+      '<div class="payment-option" id="payCash" onclick=\'selectPayment("CASH")\'>💵 CASH</div>' +
+      '<div class="payment-option" id="payOnline" onclick=\'selectPayment("ONLINE")\'>📱 ONLINE</div>' +
+      '<div class="payment-option" id="paySplit" onclick=\'selectPayment("SPLIT")\'>🔀 SPLIT</div>' +
+    '</div>' +
+    '<div id="splitPaymentForm" style="display:none;margin-top:14px;padding:16px;background:var(--warm-white);border-radius:var(--radius-md);border:1px solid var(--border)">' +
+      '<div style="margin-bottom:12px;font-size:13px;color:var(--text-muted)">Total Bill: <strong style="color:var(--espresso)">' + formatPrice(total) + '</strong></div>' +
+      '<div class="field" style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;letter-spacing:1px;color:var(--charcoal)">CASH AMOUNT</label>' +
+        '<input type="number" id="splitCash" placeholder="₹ 0" min="0" step="0.01" style="width:100%;padding:10px;border:2px solid var(--border);border-radius:var(--radius-md);background:#fff;font-size:14px"></div>' +
+      '<div class="field" style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;letter-spacing:1px;color:var(--charcoal)">ONLINE AMOUNT</label>' +
+        '<input type="number" id="splitOnline" placeholder="₹ 0" min="0" step="0.01" style="width:100%;padding:10px;border:2px solid var(--border);border-radius:var(--radius-md);background:#fff;font-size:14px"></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-top:1px solid var(--border)"><span>Total Paid</span><strong id="splitTotalPaid">₹0</strong></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--border)"><span>Remaining</span><strong id="splitRemaining" style="color:var(--pending-amber)">' + formatPrice(total) + '</strong></div>' +
+      '<div id="splitError" style="display:none;color:var(--cancelled-red);font-size:12px;margin-top:8px"></div>' +
+    '</div>' +
+    '<div class="modal-admin-actions">' +
+      '<button class="btn-cancel-modal" onclick="$(\'adminModal\').classList.remove(\'active\')">CANCEL</button>' +
+      '<button class="btn-save" id="confirmPayBtn" style="display:none" onclick="confirmRecordPayment(' + tableNum + ')">CONFIRM PAYMENT</button>' +
+    '</div>';
+  $('adminModal').classList.add('active');
 }
 
 function selectPayment(method) {
@@ -970,18 +1076,15 @@ function selectPayment(method) {
 
   const splitForm = document.getElementById('splitPaymentForm');
   if (splitForm) splitForm.style.display = (method === 'SPLIT') ? 'block' : 'none';
-  document.getElementById('settleBtn').style.display = 'block';
+  const confirmBtn = document.getElementById('confirmPayBtn');
+  if (confirmBtn) confirmBtn.style.display = 'block';
 
   // Bind live calculation for split payment
   if (method === 'SPLIT') {
     const cashInput = document.getElementById('splitCash');
     const onlineInput = document.getElementById('splitOnline');
     const handler = function() {
-      // Get the total from the bill view
-      const totalEl = document.querySelector('.bill-total-amount');
-      if (!totalEl) return;
-      const totalText = totalEl.textContent.replace(/[^0-9.]/g, '');
-      const total = parseFloat(totalText) || 0;
+      const total = Number(currentBillTotal) || 0;
       const cash = parseFloat(cashInput.value) || 0;
       const online = parseFloat(onlineInput.value) || 0;
       const paid = cash + online;
@@ -991,8 +1094,8 @@ function selectPayment(method) {
       remEl.textContent = formatPrice(Math.max(0, remaining));
       remEl.style.color = remaining < 0 ? 'var(--cancelled-red)' : remaining > 0 ? 'var(--pending-amber)' : 'var(--completed-green)';
     };
-    cashInput.removeEventListener('input', cashInput._handler);
-    onlineInput.removeEventListener('input', onlineInput._handler);
+    if (cashInput._handler) cashInput.removeEventListener('input', cashInput._handler);
+    if (onlineInput._handler) onlineInput.removeEventListener('input', onlineInput._handler);
     cashInput.addEventListener('input', handler);
     onlineInput.addEventListener('input', handler);
     cashInput._handler = handler;
@@ -1000,28 +1103,12 @@ function selectPayment(method) {
   }
 }
 
-async function settleTablePayment() {
-  if (!selectedPaymentMethod || !currentTableBillNum) return;
-
-  $('adminConfirmBox').innerHTML = `
-    <h3>Confirm Table Payment</h3>
-    <p>Table: <strong>${currentTableBillNum}</strong></p>
-    <p>Payment Method: <strong>${selectedPaymentMethod}</strong></p>
-    <p>Are you sure you want to mark this table bill as PAID?</p>
-    <div class="confirm-admin-actions">
-      <button class="btn-cancel-modal" onclick="$('adminConfirm').classList.remove('active')">GO BACK</button>
-      <button class="btn-save" onclick="doSettlePayment()">CONFIRM PAYMENT</button>
-    </div>
-  `;
-  $('adminConfirm').classList.add('active');
-}
-
-async function doSettlePayment() {
+async function confirmRecordPayment(tableNum) {
+  if (!selectedPaymentMethod) return;
   // Frontend validation for SPLIT — the server re-validates authoritatively.
   if (selectedPaymentMethod === 'SPLIT') {
     const splitErr = validateSplitAmounts(currentBillTotal);
     if (splitErr) {
-      $('adminConfirm').classList.remove('active');
       showToast(splitErr);
       const splitErrEl = document.getElementById('splitError');
       if (splitErrEl) {
@@ -1032,8 +1119,23 @@ async function doSettlePayment() {
     }
   }
 
-  const payload = { payment_method: selectedPaymentMethod };
+  $('adminConfirmBox').innerHTML =
+    '<h3>Confirm Payment</h3>' +
+    '<p>Bill: <strong>' + (currentBillNumber || '') + '</strong></p>' +
+    '<p>Table: <strong>' + tableNum + '</strong></p>' +
+    '<p>Payment Method: <strong>' + selectedPaymentMethod + '</strong></p>' +
+    (selectedPaymentMethod === 'SPLIT' ?
+      '<p>Cash: <strong>' + formatPrice(Number(document.getElementById('splitCash').value) || 0) + '</strong> · Online: <strong>' + formatPrice(Number(document.getElementById('splitOnline').value) || 0) + '</strong></p>' : '') +
+    '<p>Total: <strong>' + formatPrice(currentBillTotal) + '</strong></p>' +
+    '<div class="confirm-admin-actions">' +
+      '<button class="btn-cancel-modal" onclick="$(\'adminConfirm\').classList.remove(\'active\')">GO BACK</button>' +
+      '<button class="btn-save" onclick="doSettlePayment(' + tableNum + ')">CONFIRM PAYMENT</button>' +
+    '</div>';
+  $('adminConfirm').classList.add('active');
+}
 
+async function doSettlePayment(tableNum) {
+  const payload = { payment_method: selectedPaymentMethod };
   if (selectedPaymentMethod === 'SPLIT') {
     const cashInput = document.getElementById('splitCash');
     const onlineInput = document.getElementById('splitOnline');
@@ -1041,15 +1143,15 @@ async function doSettlePayment() {
     payload.online_amount = Number(onlineInput ? onlineInput.value : 0);
   }
 
-  const result = await apiCall('POST', '/tables/' + currentTableBillNum + '/pay', payload);
+  const result = await apiCall('POST', '/tables/' + tableNum + '/pay', payload);
   $('adminConfirm').classList.remove('active');
+  $('adminModal').classList.remove('active');
   if (result && result.success) {
-    showToast('💰 Payment successful!');
-    showPaymentSuccessBill(result.bill, currentTableBillNum, result.session);
+    showToast('💰 Payment recorded — table available');
+    showPaymentSuccessBill(result.bill, tableNum, result.session);
   } else {
-    const errMsg = (result && result.error) ? result.error : 'Error settling payment. Please try again.';
+    const errMsg = (result && result.error) ? result.error : 'Error recording payment. Please try again.';
     showToast(errMsg);
-    // Show error in split form if applicable
     const splitErr = document.getElementById('splitError');
     if (splitErr && selectedPaymentMethod === 'SPLIT') {
       splitErr.textContent = errMsg;
@@ -1065,100 +1167,65 @@ function showPaymentSuccessBill(bill, tableNum, session) {
     return;
   }
   const content = $('adminContent');
-
-  let tableRows = '';
-  (bill.orders || []).forEach(function(o) {
-    (o.items || []).forEach(function(item) {
-      const opts = item.options && item.options.length > 0 ? '<br><span style="color:#7A756D;font-size:10px">' + item.options.join(', ') + '</span>' : '';
-      tableRows += '<tr style="border-bottom:1px solid #E8DDCC">' +
-        '<td style="padding:8px 0;color:#2B211B">' + item.name + opts + '</td>' +
-        '<td style="padding:8px 0;text-align:center;color:#34322D">' + item.qty + '</td>' +
-        '<td style="padding:8px 0;text-align:right;color:#34322D">' + formatPrice(item.price) + '</td>' +
-        '<td style="padding:8px 0;text-align:right;color:#2B211B;font-weight:600">' + formatPrice(item.price * item.qty) + '</td>' +
-        '</tr>';
-    });
-  });
-
   content.innerHTML =
-    '<div style="margin-bottom:16px"><button class="btn-view" onclick="renderAdminSection(\'tables\')">&larr; Back to Tables</button></div>' +
-    '<div class="bill-view" id="printableBill">' +
-      '<div class="bill-view-header" style="border-bottom:2px double #E8DDCC;padding-bottom:20px">' +
-        '<div style="font-size:10px;letter-spacing:3px;color:#B89A5A;margin-bottom:4px">&#9733; &#9733; &#9733;</div>' +
-        '<h2 style="font-size:28px;letter-spacing:2px">THE OREGANO CAFE</h2>' +
-        '<p style="font-size:10px;color:#B89A5A;font-weight:600;letter-spacing:4px;margin-top:4px">EST. 2019 &middot; BHIWANDI</p>' +
-      '</div>' +
-      '<div style="padding:16px 0;text-align:center;border-bottom:1px solid #E8DDCC">' +
-        '<div style="font-size:13px;font-weight:600;color:#243B2A;letter-spacing:2px;margin-bottom:6px">PAYMENT SUCCESSFUL</div>' +
-        '<div style="font-size:22px;color:#2B211B;margin-bottom:4px">Table ' + tableNum + '</div>' +
-        '<div style="font-size:28px;color:#394B32;margin-bottom:6px">' + formatPrice(bill.total) + '</div>' +
-        '<div style="font-size:12px;color:#7A756D">Payment Method: <strong>' + bill.payment_method + '</strong></div>' +
-      '</div>' +
-      '<div style="padding:16px 0;border-bottom:1px solid #E8DDCC">' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#34322D;margin-bottom:6px">' +
-          '<span>Bill No: <strong>' + bill.bill_number + '</strong></span>' +
-          '<span>Session: ' + bill.session_id + '</span>' +
-        '</div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#34322D">' +
-          '<span>Date: ' + bill.payment_date + '</span>' +
-          '<span>Time: ' + bill.payment_time + '</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:16px 0">' +
-        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-          '<thead><tr style="border-bottom:2px solid #243B2A">' +
-            '<th style="text-align:left;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">ITEM</th>' +
-            '<th style="text-align:center;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">QTY</th>' +
-            '<th style="text-align:right;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">PRICE</th>' +
-            '<th style="text-align:right;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">TOTAL</th>' +
-          '</tr></thead>' +
-          '<tbody>' + tableRows + '</tbody>' +
-          '<tfoot><tr style="border-top:2px solid #243B2A">' +
-            '<td colspan="3" style="padding:12px 0;font-size:13px;font-weight:700;text-align:right;color:#2B211B">TOTAL</td>' +
-            '<td style="padding:12px 0;font-size:18px;font-weight:700;text-align:right;color:#394B32">' + formatPrice(bill.total) + '</td>' +
-          '</tr></tfoot>' +
-        '</table>' +
-      '</div>' +
-      '<div style="padding:16px 0;border-top:1px solid #E8DDCC;text-align:center">' +
-        '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">Payment: <strong>' + bill.payment_method + '</strong></div>' +
-        (bill.payment_method === 'SPLIT' ?
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:2px">Cash Paid: <strong>' + formatPrice(bill.cash_amount || 0) + '</strong></div>' +
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:2px">Online Paid: <strong>' + formatPrice(bill.online_amount || 0) + '</strong></div>' +
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">Total Paid: <strong>' + formatPrice(bill.total) + '</strong></div>'
-        :
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">' + bill.payment_date + ', ' + bill.payment_time + '</div>'
-        ) +
-      '</div>' +
-      '<div style="text-align:center;padding-top:12px;border-top:1px solid #E8DDCC">' +
-        '<div style="font-size:10px;color:#B89A5A;letter-spacing:3px">THANK YOU FOR DINING WITH US</div>' +
-      '</div>' +
-    '</div>' +
+    '<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn-view" onclick="renderAdminSection(\'tables\')">&larr; Back to Tables</button><button class="btn-view" onclick="renderAdminSection(\'bills\')">BILL QUEUE &rarr;</button></div>' +
+    '<div style="text-align:center;margin-bottom:10px"><span class="status-badge status-paid">✓ PAYMENT RECORDED — ' + (bill.payment_method || '') + '</span></div>' +
+    receiptBillHTML(bill) +
     '<div style="text-align:center;margin-top:20px;display:flex;gap:12px;justify-content:center">' +
-      '<button class="btn-settle" onclick="printBill()" style="width:auto;padding:14px 32px">&#128424; PRINT BILL</button>' +
-      '<button class="btn-view" onclick="renderAdminSection(\'tables\')">BACK TO TABLES</button>' +
+      '<button class="btn-settle" onclick="printBill()" style="width:auto;padding:14px 32px">&#128424; PRINT (A4)</button>' +
+      '<button class="btn-view" onclick="printBill(\'thermal\')" style="padding:14px 32px">🧾 PRINT (80mm THERMAL)</button>' +
+      '<button class="btn-view" onclick="renderAdminSection(\'bills\')">NEXT UNPAID BILL</button>' +
     '</div>';
 }
 
-function printBill() {
+function printBill(format) {
   var billEl = document.getElementById('printableBill');
   if (!billEl) {
     console.warn('[PRINT] No printableBill element found');
     return;
   }
+  if (format === 'thermal') {
+    var num = (currentBillNumber || (billEl ? '' : ''));
+    // Fallback: pull the bill number from the rendered receipt if needed
+    if (!num) {
+      var m = billEl.innerHTML.match(/Bill No\.&nbsp;<strong>([^<]+)<\/strong>/);
+      if (m) num = m[1];
+    }
+    if (num) {
+      printHistoricalBill(num, 'thermal');
+    } else {
+      showToast('Bill number not found for thermal print.');
+    }
+    return;
+  }
   var billHTML = billEl.outerHTML;
   var printCSS = [
-    '@page { size: portrait; margin: 15mm; }',
-    'body {',
-    '  font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;',
-    '  margin: 0; padding: 15px; background: #fff; color: #333;',
-    '  -webkit-print-color-adjust: exact; print-color-adjust: exact;',
-    '}',
+    '@page { size: A4 portrait; margin: 18mm 15mm; }',
+    'body { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: #fff; color: #2B211B; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.6; }',
     '.bill-view { max-width: 100%; margin: 0; padding: 0; background: #fff; box-shadow: none; border: none; border-radius: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }',
-    '.bill-view-header { border-bottom: 2px double #E8DDCC !important; }',
-    '.bill-view-header h2 { font-size: 22px; letter-spacing: 2px; margin: 0 0 4px; }',
+    '.bill-view-header { border-bottom: 2px double #E8DDCC !important; padding-bottom: 12px !important; }',
+    '.bill-view-header h2 { font-size: 20px !important; letter-spacing: 3px; margin: 0 0 4px; }',
+    '.receipt-bill { max-width: 100%; box-shadow: none; border: none; border-radius: 0; padding: 28px 24px 20px; background: #FCF9F3; border-top: 3px solid #243B2A; }',
+    '.rb-botanical-tl, .rb-botanical-br { display: none; }',
+    '.rb-header { padding-bottom: 18px; margin-bottom: 16px; }',
+    '.rb-header::before { background: #E8DDCC; }',
+    '.rb-cafe { font-size: 20px !important; letter-spacing: 4px; color: #243B2A; }',
+    '.rb-tag { font-size: 7.5px; letter-spacing: 3px; }',
+    '.rb-section-title { font-size: 10px; margin: 18px 0 12px; }',
+    '.rb-meta { padding: 12px 10px; margin-bottom: 2px; }',
+    '.rb-meta span { font-size: 7px; }',
+    '.rb-meta strong { font-size: 11px; }',
     'table { width: 100%; border-collapse: collapse; }',
-    'th, td { padding: 6px 4px; font-size: 11px; }',
-    'th { text-align: left; border-bottom: 2px solid #243B2A; font-size: 10px; letter-spacing: 1px; color: #7A756D; font-weight: 600; }',
-    'td { border-bottom: 1px solid #E8DDCC; }',
+    'th, td { padding: 7px 4px; font-size: 10.5px; }',
+    'th { text-align: left; border-bottom: 2px solid #243B2A; font-size: 6.5px; letter-spacing: 2.5px; color: #7A756D; font-weight: 700; text-transform: uppercase; padding-bottom: 7px; }',
+    'td { border-bottom: 1px solid rgba(232,221,204,0.5); }',
+    '.rb-trow.grand { padding: 12px 4px 6px; }',
+    '.rb-trow.grand span:first-child { font-size: 9px; }',
+    '.rb-trow.grand span:last-child { font-size: 20px; }',
+    '.rb-paystatus { margin-top: 14px; padding: 12px 10px; }',
+    '.rb-paymethod { padding: 12px 10px; }',
+    '.rb-thanks { padding-top: 16px; margin-top: 12px; }',
+    '.rb-thanks::before { background: #FCF9F3; }',
     'h2, h3, h4 { font-family: serif; margin: 0; }',
   ].join('\n');
   var printDoc = '<!DOCTYPE html><html><head>' +
@@ -1182,18 +1249,20 @@ function printBill() {
 }
 
 // ===========================
-// BILLS — HISTORICAL BILL ACCESS
+// BILLS — rush-hour queue of UNPAID bills + historical PAID bills.
+// All unpaid bills are visible simultaneously; processing one never
+// blocks access to the others.
 // ===========================
 async function renderBills(el) {
   const bills = await loadBills();
-  if (bills.length === 0) {
-    el.innerHTML = '<div class="admin-empty"><h3>NO BILLS YET</h3><p>Bills are generated automatically after successful table payments.</p></div>';
-    return;
-  }
-  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"><input type="text" id="billSearch" placeholder="Search by Bill No or Table..." style="flex:1;min-width:200px;padding:10px 14px;border:2px solid var(--border);border-radius:var(--radius-md);background:var(--cream);outline:none;font-size:14px"></div>';
+  const unpaid = bills.filter(b => (b.payment_status || 'UNPAID') === 'UNPAID');
+  const paid = bills.filter(b => b.payment_status === 'PAID');
+
+  let html = '';
   html += '<div class="filter-row" id="billFilters">';
-  ['ALL', 'CASH', 'ONLINE'].forEach(f => {
-    html += '<button class="admin-chip' + (f === 'ALL' ? ' active' : '') + '" data-bfilter="' + f + '">' + f + '</button>';
+  ['ALL', 'UNPAID', 'CASH', 'ONLINE'].forEach(f => {
+    const count = f === 'UNPAID' ? unpaid.length : (f === 'CASH' ? paid.filter(b => b.payment_method === 'CASH').length : f === 'ONLINE' ? paid.filter(b => b.payment_method === 'ONLINE').length : bills.length);
+    html += '<button class="admin-chip' + (f === 'ALL' ? ' active' : '') + '" data-bfilter="' + f + '">' + f + ' (' + count + ')</button>';
   });
   html += '</div>';
   html += '<div id="billList">';
@@ -1201,212 +1270,89 @@ async function renderBills(el) {
   html += '</div>';
   el.innerHTML = html;
 
-  $('billSearch').addEventListener('input', function() {
-    const f = document.querySelector('.admin-chip.active[data-bfilter]').dataset.bfilter;
-    $('billList').innerHTML = billListHTML(bills, f, this.value);
-  });
   document.querySelectorAll('.admin-chip[data-bfilter]').forEach(chip => {
     chip.addEventListener('click', () => {
       document.querySelectorAll('.admin-chip[data-bfilter]').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
-      const search = $('billSearch') ? $('billSearch').value : '';
-      $('billList').innerHTML = billListHTML(bills, chip.dataset.bfilter, search);
+      $('billList').innerHTML = billListHTML(bills, chip.dataset.bfilter, '');
     });
   });
 }
 
 function billListHTML(bills, filter, search) {
   let filtered = bills;
-  if (filter !== 'ALL') filtered = filtered.filter(b => b.payment_method === filter);
+  if (filter === 'UNPAID') filtered = filtered.filter(b => (b.payment_status || 'UNPAID') === 'UNPAID');
+  else if (filter === 'CASH') filtered = filtered.filter(b => b.payment_method === 'CASH');
+  else if (filter === 'ONLINE') filtered = filtered.filter(b => b.payment_method === 'ONLINE');
   if (search) {
     const q = search.toLowerCase();
     filtered = filtered.filter(b => b.bill_number.toLowerCase().includes(q) || ('' + b.table).includes(q));
   }
-  if (filtered.length === 0) return '<div class="admin-empty"><h3>NO BILLS FOUND</h3></div>';
+  if (filtered.length === 0) return '<div class="admin-empty"><h3>NO BILLS FOUND</h3><p>Unpaid bills appear here as soon as a bill is generated — process them one by one without blocking the rest.</p></div>';
   return filtered.map(b => {
-    const totalItems = (b.orders || []).reduce((sum, o) => sum + (o.items || []).length, 0);
-    return '<div class="order-card" style="cursor:pointer" onclick="viewHistoricalBill(\'' + b.bill_number + '\')">' +
+    const isUnpaid = (b.payment_status || 'UNPAID') === 'UNPAID';
+    const totalItems = (b.items && b.items.length ? b.items : (b.orders || []).reduce((s, o) => s + (o.items || []).length, 0));
+    const when = isUnpaid ? (b.bill_date || b.bill_time ? (b.bill_date || '') + ' · ' + (b.bill_time || '') : 'Bill generated') : (b.payment_date || '') + ' · ' + (b.payment_time || '');
+    return '<div class="order-card" style="cursor:pointer' + (isUnpaid ? ';border-left:4px solid #B8860B' : '') + '" onclick="viewHistoricalBill(\'' + b.bill_number + '\')">' +
       '<div class="order-card-header">' +
         '<div>' +
           '<div class="order-card-id">' + b.bill_number + '</div>' +
           '<div class="order-card-table">TABLE ' + b.table + '</div>' +
         '</div>' +
-        '<div class="order-card-time">' + b.payment_date + ' · ' + b.payment_time + '</div>' +
+        '<div class="order-card-time">' + when + '</div>' +
       '</div>' +
-      '<div class="order-card-items">' + totalItems + ' item' + (totalItems !== 1 ? 's' : '') + ' across ' + (b.orders || []).length + ' order' + ((b.orders || []).length !== 1 ? 's' : '') + '</div>' +
+      '<div class="order-card-items">' + totalItems + ' item' + (totalItems !== 1 ? 's' : '') + ' · session ' + (b.session_id || '—') + '</div>' +
       '<div class="order-card-total">' + formatPrice(b.total) + '</div>' +
       '<div class="order-card-actions">' +
-        '<span class="status-badge status-paid">PAID — ' + b.payment_method + '</span>' +
+        (isUnpaid
+          ? '<span class="status-badge status-unpaid">UNPAID</span>'
+          : '<span class="status-badge status-paid">PAID — ' + b.payment_method + '</span>') +
         '<button class="btn-view" onclick="event.stopPropagation();viewHistoricalBill(\'' + b.bill_number + '\')">VIEW BILL</button>' +
-        '<button class="btn-view" onclick="event.stopPropagation();printHistoricalBill(\'' + b.bill_number + '\')">PRINT BILL</button>' +
-        '<button class="btn-remove" onclick="event.stopPropagation();confirmDeleteBill(\'' + b.bill_number + '\',\'' + b.table + '\')">REMOVE BILL</button>' +
+        (isUnpaid
+          ? '<button class="btn-settle" style="width:auto;padding:10px 18px" onclick="event.stopPropagation();recordPaymentFromQueue(\'' + b.bill_number + '\')">RECORD PAYMENT</button>'
+          : '<button class="btn-view" onclick="event.stopPropagation();printHistoricalBill(\'' + b.bill_number + '\')">PRINT (A4)</button>' +
+            '<button class="btn-view" onclick="event.stopPropagation();printHistoricalBill(\'' + b.bill_number + '\', \'thermal\')">PRINT (80mm)</button>' +
+            '<button class="btn-remove" onclick="event.stopPropagation();confirmDeleteBill(\'' + b.bill_number + '\',\'' + b.table + '\')">REMOVE BILL</button>') +
       '</div>' +
     '</div>';
   }).join('');
+}
+
+// RECORD PAYMENT straight from the queue card — targets that bill's table.
+async function recordPaymentFromQueue(billNumber) {
+  const bill = await getBill(billNumber);
+  if (!bill) { showToast('Bill not found'); return; }
+  if ((bill.payment_status || 'UNPAID') === 'PAID') { showToast('This bill is already paid.'); return; }
+  currentBillTotal = Number(bill.total) || 0;
+  currentBillNumber = bill.bill_number;
+  openRecordPayment(bill.table);
 }
 
 async function viewHistoricalBill(billNumber) {
   const bill = await getBill(billNumber);
   if (!bill) { showToast('Bill not found'); return; }
   const content = $('adminContent');
-
-  let tableRows = '';
-  (bill.orders || []).forEach(function(o) {
-    (o.items || []).forEach(function(item) {
-      const opts = item.options && item.options.length > 0 ? '<br><span style="color:#7A756D;font-size:10px">' + item.options.join(', ') + '</span>' : '';
-      tableRows += '<tr style="border-bottom:1px solid #E8DDCC">' +
-        '<td style="padding:8px 0;color:#2B211B">' + item.name + opts + '</td>' +
-        '<td style="padding:8px 0;text-align:center;color:#34322D">' + item.qty + '</td>' +
-        '<td style="padding:8px 0;text-align:right;color:#34322D">' + formatPrice(item.price) + '</td>' +
-        '<td style="padding:8px 0;text-align:right;color:#2B211B;font-weight:600">' + formatPrice(item.price * item.qty) + '</td>' +
-        '</tr>';
-    });
-  });
-
+  currentBillTotal = Number(bill.total) || 0;
+  currentBillNumber = bill.bill_number;
+  const isUnpaid = (bill.payment_status || 'UNPAID') === 'UNPAID';
   content.innerHTML =
-    '<div style="margin-bottom:16px"><button class="btn-view" onclick="renderAdminSection(\'bills\')">&larr; Back to Bills</button></div>' +
-    '<div class="bill-view" id="printableBill">' +
-      '<div class="bill-view-header" style="border-bottom:2px double #E8DDCC;padding-bottom:20px">' +
-        '<div style="font-size:10px;letter-spacing:3px;color:#B89A5A;margin-bottom:4px">&#9733; &#9733; &#9733;</div>' +
-        '<h2 style="font-size:28px;letter-spacing:2px">THE OREGANO CAFE</h2>' +
-        '<p style="font-size:10px;color:#B89A5A;font-weight:600;letter-spacing:4px;margin-top:4px">EST. 2019 &middot; BHIWANDI</p>' +
-      '</div>' +
-      '<div style="padding:16px 0;text-align:center;border-bottom:1px solid #E8DDCC">' +
-        '<div style="font-size:22px;color:#2B211B;margin-bottom:4px">Table ' + bill.table + '</div>' +
-        '<div style="font-size:28px;color:#394B32;margin-bottom:6px">' + formatPrice(bill.total) + '</div>' +
-        '<div style="font-size:12px;color:#7A756D">Payment Method: <strong>' + bill.payment_method + '</strong></div>' +
-      '</div>' +
-      '<div style="padding:16px 0;border-bottom:1px solid #E8DDCC">' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#34322D;margin-bottom:6px">' +
-          '<span>Bill No: <strong>' + bill.bill_number + '</strong></span>' +
-          '<span>Session: ' + bill.session_id + '</span>' +
-        '</div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#34322D">' +
-          '<span>Date: ' + bill.payment_date + '</span>' +
-          '<span>Time: ' + bill.payment_time + '</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:16px 0">' +
-        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-          '<thead><tr style="border-bottom:2px solid #243B2A">' +
-            '<th style="text-align:left;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">ITEM</th>' +
-            '<th style="text-align:center;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">QTY</th>' +
-            '<th style="text-align:right;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">PRICE</th>' +
-            '<th style="text-align:right;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">TOTAL</th>' +
-          '</tr></thead>' +
-          '<tbody>' + tableRows + '</tbody>' +
-          '<tfoot><tr style="border-top:2px solid #243B2A">' +
-            '<td colspan="3" style="padding:12px 0;font-size:13px;font-weight:700;text-align:right;color:#2B211B">TOTAL</td>' +
-            '<td style="padding:12px 0;font-size:18px;font-weight:700;text-align:right;color:#394B32">' + formatPrice(bill.total) + '</td>' +
-          '</tr></tfoot>' +
-        '</table>' +
-      '</div>' +
-      '<div style="padding:16px 0;border-top:1px solid #E8DDCC;text-align:center">' +
-        '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">Payment: <strong>' + bill.payment_method + '</strong></div>' +
-        (bill.payment_method === 'SPLIT' ?
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:2px">Cash Paid: <strong>' + formatPrice(bill.cash_amount || 0) + '</strong></div>' +
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:2px">Online Paid: <strong>' + formatPrice(bill.online_amount || 0) + '</strong></div>' +
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">Total Paid: <strong>' + formatPrice(bill.total) + '</strong></div>'
-        :
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">' + bill.payment_date + ', ' + bill.payment_time + '</div>'
-        ) +
-      '</div>' +
-      '<div style="text-align:center;padding-top:12px;border-top:1px solid #E8DDCC">' +
-        '<div style="font-size:10px;color:#B89A5A;letter-spacing:3px">THANK YOU FOR DINING WITH US</div>' +
-      '</div>' +
-    '</div>' +
-    '<div style="text-align:center;margin-top:20px;display:flex;gap:12px;justify-content:center">' +
-      '<button class="btn-settle" onclick="printBill()" style="width:auto;padding:14px 32px">&#128424; PRINT BILL</button>' +
-      '<button class="btn-view" onclick="renderAdminSection(\'bills\')">BACK TO BILLS</button>' +
+    '<div style="margin-bottom:16px"><button class="btn-view" onclick="renderAdminSection(&#39;bills&#39;)">&larr; Back to Bills</button></div>' +
+    receiptBillHTML(bill) +
+    '<div class="bill-no-print" style="text-align:center;margin-top:20px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap">' +
+      '<button class="btn-view" onclick="printHistoricalBill(&#39;' + bill.bill_number + '&#39;)" style="padding:14px 28px">&#128424; PRINT (A4)</button>' +
+      '<button class="btn-view" onclick="printHistoricalBill(&#39;' + bill.bill_number + '&#39;, &#39;thermal&#39;)" style="padding:14px 28px">🧾 PRINT (80mm THERMAL)</button>' +
+      (isUnpaid ? '<button class="btn-settle" onclick="recordPaymentFromQueue(&#39;' + bill.bill_number + '&#39;)" style="width:auto;padding:14px 32px">RECORD PAYMENT</button>' : '') +
     '</div>';
 }
 
-async function printHistoricalBill(billNumber) {
+async function printHistoricalBill(billNumber, format) {
   const bill = await getBill(billNumber);
   if (!bill) { showToast('Bill not found'); return; }
-  // Build bill HTML and print in a clean window
-  let tableRows = '';
-  (bill.orders || []).forEach(function(o) {
-    (o.items || []).forEach(function(item) {
-      const opts = item.options && item.options.length > 0 ? '<br><span style="color:#7A756D;font-size:10px">' + item.options.join(', ') + '</span>' : '';
-      tableRows += '<tr style="border-bottom:1px solid #E8DDCC">' +
-        '<td style="padding:8px 0;color:#2B211B">' + item.name + opts + '</td>' +
-        '<td style="padding:8px 0;text-align:center;color:#34322D">' + item.qty + '</td>' +
-        '<td style="padding:8px 0;text-align:right;color:#34322D">' + formatPrice(item.price) + '</td>' +
-        '<td style="padding:8px 0;text-align:right;color:#2B211B;font-weight:600">' + formatPrice(item.price * item.qty) + '</td>' +
-        '</tr>';
-    });
-  });
-  var billHTML =
-    '<div class="bill-view" style="max-width:100%;margin:0;padding:0;background:#fff">' +
-      '<div class="bill-view-header" style="border-bottom:2px double #E8DDCC;padding-bottom:20px;text-align:center">' +
-        '<div style="font-size:10px;letter-spacing:3px;color:#B89A5A;margin-bottom:4px">&#9733; &#9733; &#9733;</div>' +
-        '<h2 style="font-size:22px;letter-spacing:2px;margin:0 0 4px">THE OREGANO CAFE</h2>' +
-        '<p style="font-size:10px;color:#B89A5A;font-weight:600;letter-spacing:4px;margin-top:4px">EST. 2019 &middot; BHIWANDI</p>' +
-      '</div>' +
-      '<div style="padding:16px 0;text-align:center;border-bottom:1px solid #E8DDCC">' +
-        '<div style="font-size:22px;color:#2B211B;margin-bottom:4px">Table ' + bill.table + '</div>' +
-        '<div style="font-size:28px;color:#394B32;margin-bottom:6px">' + formatPrice(bill.total) + '</div>' +
-        '<div style="font-size:12px;color:#7A756D">Payment Method: <strong>' + bill.payment_method + '</strong></div>' +
-      '</div>' +
-      '<div style="padding:16px 0;border-bottom:1px solid #E8DDCC">' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#34322D;margin-bottom:6px">' +
-          '<span>Bill No: <strong>' + bill.bill_number + '</strong></span>' +
-          '<span>Session: ' + bill.session_id + '</span>' +
-        '</div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:12px;color:#34322D">' +
-          '<span>Date: ' + bill.payment_date + '</span>' +
-          '<span>Time: ' + bill.payment_time + '</span>' +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:16px 0">' +
-        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
-          '<thead><tr style="border-bottom:2px solid #243B2A">' +
-            '<th style="text-align:left;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">ITEM</th>' +
-            '<th style="text-align:center;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">QTY</th>' +
-            '<th style="text-align:right;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">PRICE</th>' +
-            '<th style="text-align:right;padding:6px 0;font-size:10px;letter-spacing:1.5px;color:#7A756D;font-weight:600">TOTAL</th>' +
-          '</tr></thead>' +
-          '<tbody>' + tableRows + '</tbody>' +
-          '<tfoot><tr style="border-top:2px solid #243B2A">' +
-            '<td colspan="3" style="padding:12px 0;font-size:13px;font-weight:700;text-align:right;color:#2B211B">TOTAL</td>' +
-            '<td style="padding:12px 0;font-size:18px;font-weight:700;text-align:right;color:#394B32">' + formatPrice(bill.total) + '</td>' +
-          '</tr></tfoot>' +
-        '</table>' +
-      '</div>' +
-      '<div style="padding:16px 0;border-top:1px solid #E8DDCC;text-align:center">' +
-        '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">Payment: <strong>' + bill.payment_method + '</strong></div>' +
-        (bill.payment_method === 'SPLIT' ?
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:2px">Cash Paid: <strong>' + formatPrice(bill.cash_amount || 0) + '</strong></div>' +
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:2px">Online Paid: <strong>' + formatPrice(bill.online_amount || 0) + '</strong></div>' +
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">Total Paid: <strong>' + formatPrice(bill.total) + '</strong></div>'
-        :
-          '<div style="font-size:11px;color:#7A756D;margin-bottom:4px">' + bill.payment_date + ', ' + bill.payment_time + '</div>'
-        ) +
-      '</div>' +
-      '<div style="text-align:center;padding-top:12px;border-top:1px solid #E8DDCC">' +
-        '<div style="font-size:10px;color:#B89A5A;letter-spacing:3px">THANK YOU FOR DINING WITH US</div>' +
-      '</div>' +
-    '</div>';
-  var printCSS = [
-    '@page { size: portrait; margin: 15mm; }',
-    'body { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 15px; background: #fff; color: #333; -webkit-print-color-adjust: exact; print-color-adjust: exact; }',
-    'table { width: 100%; border-collapse: collapse; }',
-    'th, td { padding: 6px 4px; font-size: 11px; }',
-    'th { text-align: left; border-bottom: 2px solid #243B2A; font-size: 10px; letter-spacing: 1px; color: #7A756D; font-weight: 600; }',
-    'td { border-bottom: 1px solid #E8DDCC; }',
-    'h2, h3 { font-family: serif; margin: 0; }',
-  ].join('\n');
-  var printDoc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bill - ' + bill.bill_number + '</title><style>' + printCSS + '</style></head><body>' + billHTML + '</body></html>';
-  var printWindow = window.open('', '_blank', 'width=800,height=600');
-  if (!printWindow) { showToast('Please allow popups to print bills.'); return; }
-  printWindow.document.open();
-  printWindow.document.write(printDoc);
-  printWindow.document.close();
-  printWindow.focus();
-  setTimeout(function() {
-    try { printWindow.print(); } catch(e) { console.warn('[PRINT] Print failed:', e.message); }
-  }, 600);
+  if (format === 'thermal') {
+    openPrintWindow(printBillThermalHTML(bill), 340);
+  } else {
+    printBillHTML(bill);
+  }
 }
 
 // ===========================
@@ -1440,6 +1386,134 @@ async function permanentlyDeleteBill(billNumber) {
 // ===========================
 // DAILY EARNINGS
 // ===========================
+// ===========================
+// PRINT — shared helper with A4 (portrait) and 80mm thermal layouts.
+// Prints ONLY the bill (no sidebar/nav/background). Thermal targets a
+// 302px (80mm) page; the receipt reflows to single-column compact rows.
+// ===========================
+function printBillHTML(bill) {
+  var billHTML = receiptBillHTML(bill).replace(/id="printableBill"/g, 'id="printableBill" data-print="1"');
+  var printCSS = [
+    '@page { size: A4 portrait; margin: 18mm 15mm; }',
+    'body { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: #fff; color: #2B211B; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.6; }',
+    '.receipt-bill { max-width: 100%; box-shadow: none; border: none; border-radius: 0; padding: 28px 24px 20px; background: #FCF9F3; border-top: 3px solid #243B2A; }',
+    '.rb-botanical-tl, .rb-botanical-br { display: none; }',
+    '.rb-header { padding-bottom: 18px; margin-bottom: 16px; }',
+    '.rb-header::before { background: #E8DDCC; }',
+    '.rb-cafe { font-size: 20px !important; letter-spacing: 4px; color: #243B2A; }',
+    '.rb-tag { font-size: 7.5px; letter-spacing: 3px; }',
+    '.rb-section-title { font-size: 10px; margin: 18px 0 12px; }',
+    '.rb-meta { padding: 12px 10px; margin-bottom: 2px; }',
+    '.rb-meta span { font-size: 7px; }',
+    '.rb-meta strong { font-size: 11px; }',
+    '.rb-table { width: 100%; border-collapse: collapse; }',
+    '.rb-table th { font-size: 6.5px; padding-bottom: 7px; }',
+    '.rb-table td { padding: 7px 4px; font-size: 10.5px; }',
+    '.rb-table th.rb-th-num, .rb-table td.rb-td-num { text-align: center; width: 32px; }',
+    '.rb-table th.num, .rb-table td.num { text-align: center; }',
+    '.rb-table th.amt, .rb-table td.amt { text-align: right; }',
+    '.rb-trow.grand { padding: 12px 4px 6px; }',
+    '.rb-trow.grand span:first-child { font-size: 9px; }',
+    '.rb-trow.grand span:last-child { font-size: 20px; }',
+    '.rb-paystatus { margin-top: 14px; padding: 12px 10px; }',
+    '.rb-paymethod { padding: 12px 10px; }',
+    '.rb-thanks { padding-top: 16px; margin-top: 12px; }',
+    '.rb-thanks::before { background: #FCF9F3; }'
+  ].join('\n');
+  var printDoc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bill - ' + bill.bill_number + '</title><style>' + printCSS + '</style></head><body>' + billHTML + '</body></html>';
+  var printWindow = window.open('', '_blank', 'width=800,height=600');
+  if (!printWindow) { showToast('Please allow popups to print bills.'); return; }
+  printWindow.document.open();
+  printWindow.document.write(printDoc);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(function() {
+    try { printWindow.print(); } catch(e) { console.warn('[PRINT] Print failed:', e.message); }
+  }, 500);
+}
+
+// Thermal (80mm) variant: compact single-column receipt for receipt printers.
+function printBillThermalHTML(bill) {
+  const unpaid = (bill.payment_status || 'UNPAID') !== 'PAID';
+  const items = bill.items && bill.items.length ? bill.items : (bill.orders || []).reduce((acc, o) => acc.concat((o.items || []).map(it => ({ name: it.name, qty: it.qty, price: it.price, options: it.options || [] }))), []);
+  let itemRows = '';
+  items.forEach(it => {
+    const opts = it.options && it.options.length ? '<div class="t-opts">' + it.options.join(', ') + '</div>' : '';
+    itemRows += '<div class="t-item">' +
+      '<div class="t-item-name">' + it.qty + ' × ' + it.name + '</div>' + opts +
+      '<div class="t-item-line"><span>@ ' + formatPrice(it.price) + '</span><span>' + formatPrice(it.price * it.qty) + '</span></div>' +
+    '</div>';
+  });
+  const billDate = bill.bill_date || bill.payment_date || '';
+  const billTime = bill.bill_time || bill.payment_time || '';
+  var payBlock;
+  if (unpaid) {
+    payBlock = '<div class="t-status unpaid">*** UNPAID ***</div>';
+  } else {
+    payBlock = '<div class="t-status paid">*** PAID ***</div>' +
+      (bill.payment_method === 'SPLIT' ?
+        '<div class="t-kv"><span>Cash Paid</span><span>' + formatPrice(bill.cash_amount || 0) + '</span></div>' +
+        '<div class="t-kv"><span>Online Paid</span><span>' + formatPrice(bill.online_amount || 0) + '</span></div>' :
+        bill.payment_method === 'CASH' ?
+        '<div class="t-kv"><span>Cash Paid</span><span>' + formatPrice(bill.cash_amount || bill.total || 0) + '</span></div>' :
+        '<div class="t-kv"><span>Online Paid</span><span>' + formatPrice(bill.online_amount || bill.total || 0) + '</span></div>'
+      ) +
+      '<div class="t-kv"><span>Total Paid</span><span>' + formatPrice(bill.total) + '</span></div>' +
+      (bill.payment_date ? '<div class="t-kv"><span>Paid At</span><span>' + bill.payment_date + (bill.payment_time ? ' ' + bill.payment_time : '') + '</span></div>' : '');
+  }
+  var thermal = '<div class="thermal" id="printableBill">' +
+    '<div class="t-center t-cafe">THE OREGANO CAFE</div>' +
+    '<div class="t-center t-sub">Premium Cafe · Est. 2019 · Bhiwandi</div>' +
+    '<div class="t-dash"></div>' +
+    '<div class="t-kv"><span>Bill No.</span><span>' + bill.bill_number + '</span></div>' +
+    '<div class="t-kv"><span>Table</span><span>' + bill.table + '</span></div>' +
+    '<div class="t-kv"><span>Date</span><span>' + billDate + '</span></div>' +
+    '<div class="t-kv"><span>Time</span><span>' + billTime + '</span></div>' +
+    (bill.session_id ? '<div class="t-kv"><span>Session</span><span>' + bill.session_id + '</span></div>' : '') +
+    '<div class="t-dash"></div>' +
+    itemRows +
+    '<div class="t-dash"></div>' +
+    '<div class="t-kv"><span>Subtotal</span><span>' + formatPrice(bill.subtotal != null ? bill.subtotal : bill.total) + '</span></div>' +
+    '<div class="t-kv t-grand"><span>TOTAL</span><span>' + formatPrice(bill.total) + '</span></div>' +
+    '<div class="t-dash"></div>' +
+    payBlock +
+    '<div class="t-dash"></div>' +
+    '<div class="t-center t-thanks">Thank you for dining with us.</div>' +
+  '</div>';
+  var printCSS = [
+    '@page { size: 80mm auto; margin: 0; }',
+    'body { width: 302px; margin: 0; padding: 10px 12px; background: #fff; color: #000; font-family: "Courier New", ui-monospace, monospace; font-size: 12px; line-height: 1.4; -webkit-print-color-adjust: exact; print-color-adjust: exact; }',
+    '.thermal { width: 100%; }',
+    '.t-center { text-align: center; }',
+    '.t-cafe { font-size: 15px; font-weight: 700; letter-spacing: 2px; margin-bottom: 1px; }',
+    '.t-sub { font-size: 9px; letter-spacing: 1px; margin-bottom: 4px; color: #555; }',
+    '.t-dash { border-top: 1px dashed #999; margin: 8px 0; }',
+    '.t-kv { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; font-size: 11.5px; }',
+    '.t-item { margin: 4px 0; }',
+    '.t-item-name { font-weight: 700; font-size: 11.5px; }',
+    '.t-opts { font-size: 9.5px; padding-left: 10px; color: #555; }',
+    '.t-item-line { display: flex; justify-content: space-between; padding-left: 10px; font-size: 11px; }',
+    '.t-grand { font-weight: 700; font-size: 13px; margin-top: 2px; padding-top: 2px; }',
+    '.t-status { text-align: center; font-weight: 700; margin: 4px 0; font-size: 12px; }',
+    '.t-status.unpaid { letter-spacing: 1px; }',
+    '.t-thanks { font-size: 9.5px; margin-top: 6px; letter-spacing: 0.5px; }'
+  ].join('\n');
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bill (80mm) - ' + bill.bill_number + '</title><style>' + printCSS + '</style></head><body>' + thermal + '</body></html>';
+}
+
+// Opens a clean print window with the given full HTML document.
+function openPrintWindow(printDoc, width) {
+  var printWindow = window.open('', '_blank', 'width=' + (width || 800) + ',height=600');
+  if (!printWindow) { showToast('Please allow popups to print bills.'); return; }
+  printWindow.document.open();
+  printWindow.document.write(printDoc);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(function() {
+    try { printWindow.print(); } catch(e) { console.warn('[PRINT] Print failed:', e.message); }
+  }, 500);
+}
+
 async function renderEarnings(el, orders, expenses) {
   const today = getISTDateStr();
 

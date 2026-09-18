@@ -582,6 +582,188 @@ async function placeOrder(){
 function closeOrderConfirm(){ $('confirmOverlay').classList.remove('active'); }
 
 // ===========================
+// MY BILL — customer bill verification (bill BEFORE payment)
+// The customer can inspect table number, every item, qty, price and total.
+// No payment method is shown until payment has actually been recorded.
+// ===========================
+function customerBillHTML(bill, fallbackTable){
+  const tableNum = bill.table || fallbackTable;
+  const unpaid = (bill.payment_status || 'UNPAID') !== 'PAID';
+  const items = bill.items && bill.items.length ? bill.items : (bill.orders || []).reduce((acc, o) => acc.concat((o.items || []).map(it => ({ name: it.name, qty: it.qty, price: it.price, options: it.options || [] }))), []);
+  let rows = '';
+  let idx = 0;
+  items.forEach(it => {
+    idx++;
+    const opts = it.options && it.options.length ? '<span class="item-opts">' + it.options.join(', ') + '</span>' : '';
+    rows += '<tr>' +
+      '<td class="rb-td-num">' + idx + '</td>' +
+      '<td>' + it.name + opts + '</td>' +
+      '<td class="num">' + it.qty + '</td>' +
+      '<td class="amt">' + formatPrice(it.price) + '</td>' +
+      '<td class="amt">' + formatPrice(it.price * it.qty) + '</td>' +
+    '</tr>';
+  });
+  const billDate = bill.bill_date || bill.payment_date || '';
+  const billTime = bill.bill_time || bill.payment_time || '';
+  let paySection;
+  if (unpaid) {
+    paySection = '<div class="rb-paystatus unpaid">' +
+      '<div class="rb-ps-label">Payment Status</div>' +
+      '<div class="rb-ps-value">UNPAID</div>' +
+      '<div class="rb-ps-sub">Please verify your items, then pay at the counter.</div>' +
+    '</div>';
+  } else {
+    paySection = '<div class="rb-paystatus paid">' +
+      '<div class="rb-ps-label">Payment Status</div>' +
+      '<div class="rb-ps-value"><span class="rb-ps-check">\u2713</span>PAID</div>' +
+    '</div>' +
+    '<div class="rb-paymethod">' +
+      (bill.payment_method === 'SPLIT' ?
+        '<div class="rb-pm-row"><span>Cash Paid</span><strong>' + formatPrice(bill.cash_amount || 0) + '</strong></div>' +
+        '<div class="rb-pm-row"><span>Online Paid</span><strong>' + formatPrice(bill.online_amount || 0) + '</strong></div>' :
+        bill.payment_method === 'CASH' ?
+        '<div class="rb-pm-row"><span>Cash Paid</span><strong>' + formatPrice(bill.cash_amount || bill.total || 0) + '</strong></div>' :
+        '<div class="rb-pm-row"><span>Online Paid</span><strong>' + formatPrice(bill.online_amount || bill.total || 0) + '</strong></div>'
+      ) +
+      '<div class="rb-pm-row rb-pm-total"><span>Total Paid</span><strong>' + formatPrice(bill.total) + '</strong></div>' +
+      (bill.payment_date || bill.paid_at ? '<div class="rb-pm-row rb-pm-paidat"><span>Paid At</span><strong>' + (bill.payment_date || '') + (bill.payment_time ? ' \u00b7 ' + bill.payment_time : '') + '</strong></div>' : '') +
+    '</div>';
+  }
+  return '<div class="receipt-bill" id="printableBill">' +
+    '<div class="rb-botanical-tl">\ud83c\udf3f</div>' +
+    '<div class="rb-botanical-br">\ud83c\udf3f</div>' +
+    '<div class="rb-header">' +
+      '<div class="rb-stars">\u2736  \u2736  \u2736</div>' +
+      '<div class="rb-cafe">THE OREGANO CAFE</div>' +
+      '<div class="rb-tag">Premium Cafe \u00b7 Est. 2019 \u00b7 Bhiwandi</div>' +
+    '</div>' +
+    '<div class="rb-section-title">Customer Bill</div>' +
+    '<div class="rb-meta">' +
+      '<div><span>Bill No.</span><strong>' + bill.bill_number + '</strong></div>' +
+      '<div><span>Table No.</span><strong>' + tableNum + '</strong></div>' +
+      '<div><span>Date</span><strong>' + billDate + '</strong></div>' +
+      '<div><span>Time</span><strong>' + billTime + '</strong></div>' +
+      (bill.session_id ? '<div><span>Session</span><strong>' + bill.session_id + '</strong></div>' : '') +
+    '</div>' +
+    '<table class="rb-table">' +
+      '<thead><tr><th class="rb-th-num">#</th><th>Item</th><th class="num">Qty</th><th class="amt">Price</th><th class="amt">Total</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>' +
+    '<div class="rb-totals">' +
+      '<div class="rb-trow"><span>Subtotal</span><span>' + formatPrice(bill.subtotal != null ? bill.subtotal : bill.total) + '</span></div>' +
+      '<div class="rb-trow grand"><span>TOTAL AMOUNT</span><span>' + formatPrice(bill.total) + '</span></div>' +
+    '</div>' +
+    paySection +
+    '<div class="rb-thanks">' +
+      '<div class="rb-thanks-msg">Thank you for dining with us.</div>' +
+      '<div class="rb-thanks-brand">THE OREGANO CAFE</div>' +
+      '<div class="rb-thanks-tagline">Good Food. Warm Moments. Beautifully Served.</div>' +
+    '</div>' +
+  '</div>';
+}
+
+async function loadMyBill(){
+  if (!currentTable) { showToast('Please enter your table number first.'); return; }
+  // Public endpoint — customers never log in.
+  let result = await apiCall('GET', '/customer/tables/' + currentTable + '/current-bill');
+  // Fallback for older servers: admin endpoint if a token happens to exist.
+  if (!result && API_TOKEN) result = await apiCall('GET', '/tables/' + currentTable + '/current-bill');
+  if (!result || !result.session) {
+    // No session yet — friendly empty state instead of a bare toast.
+    $('myBillContent').innerHTML = '<div class="modal-handle"></div><div class="modal-title">MY BILL</div>' +
+      '<p class="modal-desc">Nothing on your bill yet. Your bill is generated once your orders are served — ask our staff whenever you are ready.</p>' +
+      '<button class="modal-add-btn" onclick="closeMyBill()">CLOSE</button>';
+    $('myBillOverlay').classList.add('active');
+    return;
+  }
+  const content = $('myBillContent');
+  if (result.bill) {
+    // Generated bill exists — show it (UNPAID or PAID with the real method)
+    content.innerHTML = customerBillHTML(result.bill, currentTable) +
+      '<div class="bill-no-print" style="text-align:center;margin-top:16px;display:flex;gap:10px;justify-content:center">' +
+        '<button class="btn-order" style="width:auto;padding:12px 24px" onclick="printMyBill()">🖨 PRINT BILL</button>' +
+        '<button class="btn-cancel-modal btn-view" style="padding:12px 24px;border-radius:var(--radius-md)" onclick="closeMyBill()">CLOSE</button>' +
+      '</div>';
+  } else {
+    // No bill generated yet — show a live preview of consumed items
+    const items = (result.orders || []).reduce((acc, o) => acc.concat((o.items || []).map(it => ({ name: it.name, qty: it.qty, price: it.price, options: it.options || [] }))), []);
+    if (!items.length) {
+      content.innerHTML = '<div class="modal-handle"></div><div class="modal-title">MY BILL</div>' +
+        '<p class="modal-desc">No items on your bill yet. Ask our staff for your bill when you are ready.</p>' +
+        '<button class="modal-add-btn" onclick="closeMyBill()">CLOSE</button>';
+      $('myBillOverlay').classList.add('active');
+      return;
+    }
+    let rows = '';
+    items.forEach(it => {
+      rows += '<tr><td>' + it.name + '</td><td class="num">' + it.qty + '</td><td class="amt">' + formatPrice(it.price) + '</td><td class="amt">' + formatPrice(it.price * it.qty) + '</td></tr>';
+    });
+    content.innerHTML = '<div class="receipt-bill">' +
+      '<div class="rb-botanical-tl">\ud83c\udf3f</div>' +
+      '<div class="rb-botanical-br">\ud83c\udf3f</div>' +
+      '<div class="rb-header"><div class="rb-stars">\u2736  \u2736  \u2736</div><div class="rb-cafe">THE OREGANO CAFE</div><div class="rb-tag">Premium Cafe \u00b7 Est. 2019 \u00b7 Bhiwandi</div></div>' +
+      '<div class="rb-section-title">Bill Preview</div>' +
+      '<div class="rb-meta"><div><span>Table No.</span><strong>' + currentTable + '</strong></div><div><span>Session</span><strong>' + result.session.id + '</strong></div></div>' +
+      '<table class="rb-table"><thead><tr><th class="rb-th-num">#</th><th>Item</th><th class="num">Qty</th><th class="amt">Price</th><th class="amt">Total</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div class="rb-totals"><div class="rb-trow grand"><span>TOTAL SO FAR</span><span>' + formatPrice(result.total) + '</span></div></div>' +
+      '<div class="rb-paystatus unpaid"><div class="rb-ps-label">Payment Status</div><div class="rb-ps-value">BILL NOT GENERATED</div><div class="rb-ps-sub">Ask our staff to generate your bill.</div></div>' +
+      '</div>' +
+      '<div class="bill-no-print" style="text-align:center;margin-top:16px"><button class="btn-view" style="padding:12px 24px" onclick="closeMyBill()">CLOSE</button></div>';
+  }
+  $('myBillOverlay').classList.add('active');
+}
+
+function printMyBill(){
+  var billEl = document.querySelector('#myBillContent #printableBill');
+  if (!billEl) { showToast('Nothing to print.'); return; }
+  var billHTML = billEl.outerHTML;
+  var printCSS = [
+    '@page { size: A4 portrait; margin: 18mm 15mm; }',
+    'body { font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: #fff; color: #2B211B; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.6; }',
+    '.receipt-bill { max-width: 100%; box-shadow: none; border: none; border-radius: 0; padding: 28px 24px 20px; background: #FCF9F3; border: none; border-top: 3px solid #243B2A; }',
+    '.rb-botanical-tl, .rb-botanical-br { display: none; }',
+    '.rb-header { padding-bottom: 18px; margin-bottom: 16px; }',
+    '.rb-header::before { background: #E8DDCC; }',
+    '.rb-cafe { font-size: 20px !important; letter-spacing: 4px; color: #243B2A; }',
+    '.rb-tag { font-size: 7.5px; letter-spacing: 3px; }',
+    '.rb-section-title { font-size: 10px; margin: 18px 0 12px; }',
+    '.rb-meta { padding: 12px 10px; margin-bottom: 2px; }',
+    '.rb-meta span { font-size: 7px; }',
+    '.rb-meta strong { font-size: 11px; }',
+    '.rb-table { width: 100%; border-collapse: collapse; }',
+    '.rb-table th { font-size: 6.5px; padding-bottom: 7px; }',
+    '.rb-table td { padding: 7px 4px; font-size: 10.5px; }',
+    '.rb-table th.rb-th-num, .rb-table td.rb-td-num { text-align: center; width: 32px; }',
+    '.rb-table th.num, .rb-table td.num { text-align: center; }',
+    '.rb-table th.amt, .rb-table td.amt { text-align: right; }',
+    '.rb-trow.grand { padding: 12px 4px 6px; }',
+    '.rb-trow.grand span:first-child { font-size: 9px; }',
+    '.rb-trow.grand span:last-child { font-size: 20px; }',
+    '.rb-paystatus { margin-top: 14px; padding: 12px 10px; }',
+    '.rb-paymethod { padding: 12px 10px; }',
+    '.rb-thanks { padding-top: 16px; margin-top: 12px; }',
+    '.rb-thanks::before { background: #FCF9F3; }',
+    '.bill-no-print { display: none !important; }'
+  ].join('\n');
+  var printDoc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bill - The Oregano Cafe</title><style>' + printCSS + '</style></head><body>' + billHTML + '</body></html>';
+  var printWindow = window.open('', '_blank', 'width=800,height=600');
+  if (!printWindow) { showToast('Please allow popups to print the bill.'); return; }
+  printWindow.document.open();
+  printWindow.document.write(printDoc);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(function(){ try { printWindow.print(); } catch(e) { console.warn('[PRINT] failed:', e.message); } }, 500);
+}
+
+function closeMyBill(){ $('myBillOverlay').classList.remove('active'); }
+if(!isAdminPage){
+  const mbBtn = $('myBillBtn');
+  if (mbBtn) mbBtn.addEventListener('click', loadMyBill);
+  const mbOv = $('myBillOverlay');
+  if (mbOv) mbOv.addEventListener('click', e => { if (e.target === mbOv) closeMyBill(); });
+}
+
+// ===========================
 // SEARCH
 // ===========================
 if(!isAdminPage && $('searchToggleBtn')){
