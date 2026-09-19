@@ -12,10 +12,11 @@ CREATE TABLE IF NOT EXISTS admins (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert default admin
+-- Insert default admin (bill-before-payment workflow credentials)
+-- NOTE: legacy admin/admin123 record is removed by the 20260918 migration.
 INSERT INTO admins (username, password, name)
-VALUES ('admin', 'admin123', 'Admin')
-ON CONFLICT (username) DO NOTHING;
+VALUES ('oreganocafe', '2019', 'Admin')
+ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password;
 
 -- TABLE SESSIONS table
 CREATE TABLE IF NOT EXISTS table_sessions (
@@ -82,19 +83,25 @@ CREATE TABLE IF NOT EXISTS payments (
 
 CREATE INDEX idx_payments_session ON payments(session_id);
 
--- BILLS table (auto-generated after successful table payment)
+-- BILLS table — generated BEFORE payment (UNPAID), updated to PAID on payment.
 CREATE TABLE IF NOT EXISTS bills (
   id TEXT PRIMARY KEY,
   bill_number TEXT UNIQUE NOT NULL,
   session_id TEXT REFERENCES table_sessions(id),
   "table" INTEGER NOT NULL,
   orders JSONB DEFAULT '[]',
+  items JSONB DEFAULT '[]',
+  subtotal NUMERIC DEFAULT 0,
   total NUMERIC NOT NULL DEFAULT 0,
-  payment_method TEXT NOT NULL CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT')),
+  payment_status TEXT DEFAULT 'UNPAID' CHECK (payment_status IN ('UNPAID', 'PAID')),
+  payment_method TEXT CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT') OR payment_method IS NULL),
   cash_amount NUMERIC DEFAULT 0,
   online_amount NUMERIC DEFAULT 0,
-  payment_date TEXT NOT NULL,
-  payment_time TEXT NOT NULL,
+  bill_date TEXT,
+  bill_time TEXT,
+  payment_date TEXT,
+  payment_time TEXT,
+  paid_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -117,3 +124,46 @@ ALTER TABLE bills ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;
 -- Add columns for split payment accounting on orders
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;
+
+-- ============================================
+-- BILL-BEFORE-PAYMENT WORKFLOW (2026-09)
+-- Bills are generated UNPAID first; payment is recorded afterwards.
+-- ============================================
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'UNPAID';
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]';
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS subtotal NUMERIC DEFAULT 0;
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS bill_date TEXT;
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS bill_time TEXT;
+ALTER TABLE bills ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS online_amount NUMERIC DEFAULT 0;
+
+-- Allow UNPAID bills: payment_method becomes nullable, payment_date/time nullable
+DO $$ BEGIN
+  ALTER TABLE bills ALTER COLUMN payment_method DROP NOT NULL;
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE bills DROP CONSTRAINT IF EXISTS bills_payment_method_check;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE bills ADD CONSTRAINT bills_payment_method_check
+    CHECK (payment_method IN ('CASH', 'ONLINE', 'SPLIT') OR payment_method IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE bills ALTER COLUMN payment_date DROP NOT NULL;
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE bills ALTER COLUMN payment_time DROP NOT NULL;
+EXCEPTION WHEN others THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE bills ADD CONSTRAINT bills_payment_status_check
+    CHECK (payment_status IN ('UNPAID', 'PAID'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_bills_payment_status ON bills(payment_status);
+
+-- Admin credential change: new credentials only, legacy record removed
+INSERT INTO admins (username, password, name)
+VALUES ('oreganocafe', '2019', 'Admin')
+ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password;
+DELETE FROM admins WHERE username = 'admin';

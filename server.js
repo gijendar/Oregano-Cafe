@@ -45,6 +45,28 @@ function getISTTimeStr() {
 async function runStartupMigrations() {
   if (!USE_DB) return;
   try {
+    // Ensure the admins table holds ONLY the new credentials.
+    // (UPSERT new admin, then delete the legacy admin/admin123 record.)
+    const adminResult = await supabase.rpc('exec_sql', { sql: `
+      INSERT INTO admins (username, password, name) VALUES ('${ADMIN_USERNAME}', '${ADMIN_PASSWORD}', 'Admin')
+      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password;
+      DELETE FROM admins WHERE username = 'admin';
+    ` });
+    if (adminResult && adminResult.error) {
+      console.log('[MIGRATION] exec_sql unavailable — trying direct admin-table upsert:', adminResult.error.message || 'ok');
+      // Fallback without exec_sql: upsert new record via the REST API, then try to
+      // remove the legacy 'admin' record (guarded — username column is unique).
+      const up = await supabase.from('admins')
+        .upsert({ username: ADMIN_USERNAME, password: ADMIN_PASSWORD, name: 'Admin' }, { onConflict: 'username' });
+      if (up.error) console.warn('[MIGRATION] Admin upsert failed:', up.error.message);
+      else console.log('[MIGRATION] Admin record ensured: ' + ADMIN_USERNAME);
+      const del = await supabase.from('admins').delete().eq('username', 'admin');
+      if (del.error) console.warn('[MIGRATION] Legacy admin removal failed (may not exist):', del.error.message);
+      else console.log('[MIGRATION] Legacy admin/admin123 record removed');
+    } else {
+      console.log('[MIGRATION] Admin credentials ensured (legacy admin record removed)');
+    }
+
     // Attempt to fix bills table CHECK constraint to support SPLIT payments
     // This is safe to run multiple times
     const result = await supabase.rpc('exec_sql', { sql: `
@@ -98,6 +120,28 @@ async function runStartupMigrations() {
         console.log('[MIGRATION] Split payment columns verified on bills + payments');
       }
     } catch (probeErr) { /* non-fatal */ }
+
+    // Probe for bill-before-payment columns (payment_status, items, etc.)
+    // Without these, bills can only be created AFTER payment (old workflow).
+    try {
+      const { error: bpProbe } = await supabase.from('bills').select('payment_status').limit(1);
+      const { error: bpItemsProbe } = await supabase.from('bills').select('items').limit(1);
+      const missingPaymentStatus = bpProbe && bpProbe.message && bpProbe.message.includes('column');
+      const missingItems = bpItemsProbe && bpItemsProbe.message && bpItemsProbe.message.includes('column');
+      if (missingPaymentStatus || missingItems) {
+        console.warn('=================================================================');
+        if (missingPaymentStatus) console.warn('[MIGRATION REQUIRED] bills table is missing payment_status column.');
+        if (missingItems) console.warn('[MIGRATION REQUIRED] bills table is missing items column.');
+        console.warn('[MIGRATION REQUIRED] Bill-before-payment workflow will NOT work on Supabase.');
+        console.warn('[MIGRATION REQUIRED] Bills will be stored in memory only (lost on restart).');
+        console.warn('[MIGRATION REQUIRED] Run supabase/migrations/20260918_001_bill_before_payment.sql');
+        console.warn('[MIGRATION REQUIRED] in the Supabase SQL Editor to fix this permanently.');
+        console.warn('=================================================================');
+      } else {
+        console.log('[MIGRATION] Bill-before-payment columns verified (payment_status, items)');
+      }
+    } catch (bpProbeErr) { /* non-fatal */ }
+
     console.log('[MIGRATION] Startup migrations completed');
   } catch (e) {
     // rpc function may not exist — this is expected
@@ -114,6 +158,14 @@ const USE_DB = !!(supabaseUrl && supabaseKey);
 
 // Declare supabase at module scope so all routes can access it
 let supabase = null;
+
+// ===========================
+// ADMIN AUTH — server-side credentials (never shipped to the customer client)
+// ===========================
+// Must be declared before runStartupMigrations() which references them.
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'oreganocafe';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '2019';
+const ADMIN_SESSION_TOKEN = 'toc-' + crypto.createHash('sha256').update(ADMIN_USERNAME + ':' + ADMIN_PASSWORD).digest('hex').substring(0, 32);
 
 if (USE_DB) {
   // Log only the project hostname (not the full URL with sensitive path)
@@ -146,7 +198,7 @@ function broadcastSSE(event, data) {
 // IN-MEMORY FALLBACK (local dev without Supabase)
 // ===========================
 const db = {
-  admins: [{ id: 1, username: 'admin', password: 'admin123', name: 'Admin' }],
+  admins: [{ id: 1, username: ADMIN_USERNAME, password: ADMIN_PASSWORD, name: 'Admin' }],
   orders: [],
   expenses: [],
   table_sessions: [],
@@ -176,11 +228,12 @@ app.use((err, req, res, next) => {
   }
 });
 
-// Auth middleware
+// Auth middleware — token derives from the current admin credentials, so changing
+// credentials (or the admins table) immediately invalidates every old session.
 function authMiddleware(req, res, next) {
   const token = req.headers['x-admin-token'];
   if (!token) return res.status(401).json({ error: 'No token provided' });
-  if (token !== 'admin-session-token') return res.status(401).json({ error: 'Invalid token' });
+  if (token !== ADMIN_SESSION_TOKEN) return res.status(401).json({ error: 'Invalid token' });
   next();
 }
 
@@ -190,7 +243,7 @@ function authMiddleware(req, res, next) {
 app.get('/api/events', (req, res) => {
   // EventSource cannot send custom headers, so the token arrives as a query param.
   const token = req.headers['x-admin-token'] || req.query.token;
-  if (token !== 'admin-session-token') return res.status(401).json({ error: 'Invalid token' });
+  if (token !== ADMIN_SESSION_TOKEN) return res.status(401).json({ error: 'Invalid token' });
 
 
   res.writeHead(200, {
@@ -253,11 +306,11 @@ app.post('/api/login', async (req, res) => {
         return res.status(500).json({ error: 'Database error. Please try again.' });
       }
       if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
-      res.json({ success: true, token: 'admin-session-token', name: admin.name });
+      res.json({ success: true, token: ADMIN_SESSION_TOKEN, name: admin.name });
     } else {
       const admin = db.admins.find(a => a.username === username && a.password === password);
       if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
-      res.json({ success: true, token: 'admin-session-token', name: admin.name });
+      res.json({ success: true, token: ADMIN_SESSION_TOKEN, name: admin.name });
     }
   } catch (e) {
     console.error('Login route error:', e.message);
@@ -440,6 +493,140 @@ async function generateBillNumber() {
   count += db.bills.filter(b => b.bill_number.startsWith(prefix)).length;
   const num = (count + 1).toString().padStart(3, '0');
   return prefix + num;
+}
+
+// ===========================
+// UNPAID BILL HELPERS — bill-before-payment workflow
+// A bill is generated when the customer asks for it, BEFORE any payment method
+// is chosen. payment_method stays null and payment_status stays 'UNPAID' until
+// the admin records CASH / ONLINE / SPLIT against the generated bill.
+// ===========================
+
+// Aggregate all UNPAID COMPLETED orders of a session into one items list.
+// CANCELLED and PENDING orders are never payable — they are excluded.
+function aggregatePayableItems(orders) {
+  const items = [];
+  for (const o of orders) {
+    for (const it of (o.items || [])) {
+      items.push({
+        name: it.name,
+        qty: Number(it.qty) || 0,
+        price: Number(it.price) || 0,
+        total: (Number(it.price) || 0) * (Number(it.qty) || 0),
+        options: it.options || [],
+        order_id: o.id,
+        order_time: o.time || null
+      });
+    }
+  }
+  return items;
+}
+
+// Build the unpaid-bill record for a session (or null when there is nothing
+// payable yet). One session always has AT MOST ONE unpaid bill.
+async function getUnpaidBillForSession(session) {
+  if (!session) return null;
+  if (USE_DB) {
+    const { data: existing, error: billErr } = await supabase
+      .from('bills')
+      .select('*')
+      .eq('session_id', session.id)
+      .eq('payment_status', 'UNPAID')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing) return existing;
+    if (billErr) console.warn('[BILLS] getUnpaidBillForSession Supabase query error:', billErr.message);
+    // Fallback: bill may exist only in memory (Supabase insert failed for schema reasons)
+    const memBill = db.bills.find(b => b.session_id === session.id && b.payment_status === 'UNPAID');
+    if (memBill) return memBill;
+  } else {
+    const existing = db.bills.find(b => b.session_id === session.id && b.payment_status === 'UNPAID');
+    if (existing) return existing;
+  }
+  return null;
+}
+
+// Create (or refresh) the single UNPAID bill for a session from its unpaid
+// COMPLETED orders. PENDING orders are not on the bill yet — the customer may
+// still order more; generate again before payment to pick them up.
+async function createUnpaidBillForSession(session, tableNum) {
+  let unpaidOrders;
+  if (USE_DB) {
+    const { data } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('session_id', session.id)
+      .eq('order_status', 'COMPLETED')
+      .eq('payment_status', 'UNPAID')
+      .order('timestamp', { ascending: true });
+    unpaidOrders = data || [];
+  } else {
+    unpaidOrders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
+  }
+
+  if (!unpaidOrders.length) return { error: 'No completed unpaid orders for this session yet.' };
+
+  const totalAmount = unpaidOrders.reduce((sum, o) => sum + Number(o.total), 0);
+  if (totalAmount <= 0) return { error: 'No payable amount for this session.' };
+
+  const now = new Date();
+  const istNow = getISTNow();
+  const issuedIST = formatISTDateTime(istNow);
+  const billNumber = await generateBillNumber();
+
+  const bill = {
+    id: 'BILL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+    bill_number: billNumber,
+    session_id: session.id,
+    table: tableNum,
+    orders: unpaidOrders.map(o => ({ id: o.id, items: o.items, total: o.total, time: o.time, order_status: o.order_status })),
+    items: aggregatePayableItems(unpaidOrders),
+    subtotal: totalAmount,
+    total: totalAmount,
+    payment_status: 'UNPAID',
+    payment_method: null,
+    cash_amount: 0,
+    online_amount: 0,
+    bill_date: issuedIST.date,
+    bill_time: issuedIST.time12h + ' IST',
+    payment_date: null,
+    payment_time: null,
+    paid_at: null,
+    created_at: now.toISOString()
+  };
+
+  if (USE_DB) {
+    let insertErr;
+    try {
+      const r = await supabase.from('bills').insert(bill);
+      insertErr = r.error;
+    } catch (e) { insertErr = e; }
+    if (insertErr) {
+      const isColumnErr = insertErr.message && insertErr.message.includes('column');
+      const isConstraintErr = insertErr.code === '23514' || (insertErr.message && insertErr.message.includes('check constraint'));
+      if (isColumnErr || isConstraintErr) {
+        // Supabase schema not migrated yet — insert a compatible subset and keep
+        // the complete record in memory so the API/UI always has the full data.
+        console.warn('[BILLS] Supabase insert failed (' + insertErr.message + ') — inserting minimal unpaid bill, full record kept in memory.');
+        const minimal = { ...bill };
+        delete minimal.items; delete minimal.subtotal; delete minimal.bill_date; delete minimal.bill_time; delete minimal.paid_at;
+        try {
+          const r2 = await supabase.from('bills').insert(minimal);
+          if (r2.error) console.warn('[BILLS] Minimal insert also failed:', r2.error.message, '— unpaid bill kept in memory only.');
+        } catch (e2) { console.warn('[BILLS] Minimal insert exception:', e2.message); }
+        db.bills.push(bill);
+      } else {
+        console.warn('[BILLS] Unhandled unpaid-bill insert error — keeping in memory:', insertErr.message);
+        db.bills.push(bill);
+      }
+    }
+  } else {
+    db.bills.push(bill);
+  }
+
+  console.log(`[BILL GENERATED] ${bill.bill_number} — Table ${tableNum} — ₹${totalAmount} — UNPAID (session ${session.id}, ${unpaidOrders.length} order(s))`);
+  return { bill };
 }
 
 // ===========================
@@ -881,7 +1068,92 @@ app.get('/api/tables/:number/bill', authMiddleware, asyncWrap(async (req, res) =
   res.json({ session, orders, total });
 }));
 
-// Settle table bill (payment)
+// Generate the bill for a table session — BEFORE any payment method is chosen.
+// Body is ignored: payment method is NOT part of bill generation.
+app.post('/api/tables/:number/generate-bill', authMiddleware, asyncWrap(async (req, res) => {
+  const tableNum = Number(req.params.number);
+  console.log(`[GENERATE-BILL] Request - Table ${tableNum}`);
+  const session = await getActiveSession(tableNum);
+  if (!session) {
+    console.warn(`[GENERATE-BILL] No active session for table ${tableNum}`);
+    return res.status(404).json({ error: 'No active session for this table' });
+  }
+
+  // One session = one unpaid bill. Re-generating refreshes it (idempotent).
+  const existing = await getUnpaidBillForSession(session);
+  if (existing) {
+    console.log(`[GENERATE-BILL] Existing unpaid bill found: ${existing.bill_number} — returning as-is`);
+    return res.json({ success: true, bill: existing, regenerated: false });
+  }
+  const result = await createUnpaidBillForSession(session, tableNum);
+  if (result.error) {
+    console.warn(`[GENERATE-BILL] Failed for table ${tableNum}: ${result.error}`);
+    return res.status(400).json({ error: result.error });
+  }
+  console.log(`[GENERATE-BILL] Created bill ${result.bill.bill_number} for table ${tableNum}, session ${session.id}, total ₹${result.bill.total}`);
+  broadcastSSE('bill_generated', { bill_number: result.bill.bill_number, table: tableNum, session_id: session.id, total: result.bill.total, payment_status: 'UNPAID' });
+  res.json({ success: true, bill: result.bill, regenerated: false });
+}));
+
+// CUSTOMER version (no login — matches the no-login ordering flow).
+// Returns ONLY the current bill/session info for one table.
+app.get('/api/customer/tables/:number/current-bill', asyncWrap(async (req, res) => {
+  const tableNum = Number(req.params.number);
+  if (!Number.isInteger(tableNum) || tableNum < 1 || tableNum > 20) {
+    return res.status(400).json({ error: 'Please enter a table number between 1-20.' });
+  }
+  const session = await getActiveSession(tableNum);
+  if (!session) return res.json({ session: null, bill: null, orders: [], total: 0, payment_status: null });
+  const bill = await getUnpaidBillForSession(session);
+  if (bill) return res.json({ session, bill, payment_status: 'UNPAID' });
+  let orders = [];
+  if (USE_DB) {
+    const { data } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('session_id', session.id)
+      .eq('order_status', 'COMPLETED')
+      .eq('payment_status', 'UNPAID')
+      .order('timestamp', { ascending: true });
+    orders = data || [];
+  } else {
+    orders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
+  }
+  const total = orders.reduce((s, o) => s + Number(o.total), 0);
+  res.json({ session, bill: null, orders, total, payment_status: null });
+}));
+
+// Get the current bill for a table (unpaid bill if generated, else live order list)
+app.get('/api/tables/:number/current-bill', authMiddleware, asyncWrap(async (req, res) => {
+  const tableNum = Number(req.params.number);
+  const session = await getActiveSession(tableNum);
+  if (!session) return res.json({ session: null, bill: null, orders: [], total: 0, payment_status: null });
+
+  const bill = await getUnpaidBillForSession(session);
+  if (bill) {
+    return res.json({ session, bill, payment_status: 'UNPAID' });
+  }
+  // No bill yet — expose the live completed-unpaid orders so the customer/admin
+  // can still inspect what has been consumed so far.
+  let orders = [];
+  if (USE_DB) {
+    const { data } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('session_id', session.id)
+      .eq('order_status', 'COMPLETED')
+      .eq('payment_status', 'UNPAID')
+      .order('timestamp', { ascending: true });
+    orders = data || [];
+  } else {
+    orders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
+  }
+  const total = orders.reduce((s, o) => s + Number(o.total), 0);
+  res.json({ session, bill: null, orders, total, payment_status: null });
+}));
+
+// Record payment for a generated UNPAID bill (admin action — happens AFTER the
+// bill exists and has been reviewed). Payment method IS required here.
 app.post('/api/tables/:number/pay', authMiddleware, asyncWrap(async (req, res) => {
   const tableNum = Number(req.params.number);
   const { payment_method, cash_amount, online_amount } = req.body;
@@ -892,280 +1164,209 @@ app.post('/api/tables/:number/pay', authMiddleware, asyncWrap(async (req, res) =
   }
 
   if (!payment_method || !['CASH', 'ONLINE', 'SPLIT'].includes(payment_method)) {
+    console.warn(`[PAYMENT] Invalid payment method: ${payment_method}`);
     return res.status(400).json({ error: 'Payment method must be CASH, ONLINE, or SPLIT' });
   }
 
   const session = await getActiveSession(tableNum);
-  if (!session) return res.status(404).json({ error: 'No active session for this table' });
+  if (!session) {
+    console.warn(`[PAYMENT] No active session for table ${tableNum}`);
+    return res.status(404).json({ error: 'No active session for this table' });
+  }
+
+  // Payment applies to the session's generated UNPAID bill (bill BEFORE payment).
+  const bill = await getUnpaidBillForSession(session);
+  if (!bill) {
+    console.warn(`[PAYMENT] No unpaid bill found for session ${session.id} (table ${tableNum}). Bill may not have been generated yet.`);
+    return res.status(400).json({ error: 'No unpaid bill generated for this session. Generate the bill first.' });
+  }
+  console.log(`[PAYMENT] Found unpaid bill ${bill.bill_number} — total ₹${bill.total}, session ${session.id}`);
 
   const now = new Date();
   const istNow = getISTNow();
   const paymentIST = formatISTDateTime(istNow);
 
-  // Helper: process payment for a given set of unpaid orders (works for both DB and in-memory)
-  async function processPayment(unpaidOrders, source) {
-    // Server-side total calculation (authoritative)
-    const totalAmount = unpaidOrders.reduce((sum, o) => sum + Number(o.total), 0);
-    if (totalAmount === 0) return { error: 'No unpaid amount for this table' };
+  // Server-side total calculation (authoritative)
+  const totalAmount = Number(bill.total);
+  if (!totalAmount || totalAmount <= 0) {
+    return res.status(400).json({ error: 'Bill has no payable amount.' });
+  }
 
-    // Calculate cash/online split
-    let cashAmt = 0;
-    let onlineAmt = 0;
-    if (payment_method === 'CASH') {
-      cashAmt = totalAmount;
-      onlineAmt = 0;
-    } else if (payment_method === 'ONLINE') {
-      cashAmt = 0;
-      onlineAmt = totalAmount;
-    } else {
-      // SPLIT: validate cash + online = total
-      const clientCash = Number(cash_amount) || 0;
-      const clientOnline = Number(online_amount) || 0;
-      // Safe money comparison: round to 2 decimal places
-      const clientTotal = Math.round((clientCash + clientOnline) * 100) / 100;
-      const serverTotal = Math.round(totalAmount * 100) / 100;
-      if (clientTotal !== serverTotal) {
-        return { error: 'Cash + Online amount must equal the total bill amount.' };
-      }
-      cashAmt = clientCash;
-      onlineAmt = clientOnline;
+  // Calculate cash/online split
+  let cashAmt = 0;
+  let onlineAmt = 0;
+  if (payment_method === 'CASH') {
+    cashAmt = totalAmount;
+    onlineAmt = 0;
+  } else if (payment_method === 'ONLINE') {
+    cashAmt = 0;
+    onlineAmt = totalAmount;
+  } else {
+    // SPLIT: validate cash + online = bill total (authoritative server-side check)
+    const clientCash = Number(cash_amount) || 0;
+    const clientOnline = Number(online_amount) || 0;
+    if (clientCash < 0 || clientOnline < 0) {
+      return res.status(400).json({ error: 'Cash and Online amounts cannot be negative.' });
     }
+    const clientTotal = Math.round((clientCash + clientOnline) * 100) / 100;
+    const serverTotal = Math.round(totalAmount * 100) / 100;
+    if (clientTotal !== serverTotal) {
+      return res.status(400).json({ error: 'Cash + Online amount must equal the total bill amount.' });
+    }
+    cashAmt = clientCash;
+    onlineAmt = clientOnline;
+  }
 
-    if (source === 'db') {
-      // Mark all unpaid completed orders as paid
-      for (const o of unpaidOrders) {
-        await supabase.from('orders').update({
-          payment_status: 'PAID',
-          payment_method: payment_method,
-          paid_at: now.toISOString()
-        }).eq('id', o.id);
-      }
+  // Idempotency: session already settled?
+  if (session.status === 'SETTLED') {
+    return res.status(400).json({ error: 'This session has already been paid and settled.' });
+  }
 
-      // Create payment record
-      const payment = {
-        id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
-        session_id: session.id,
-        table: tableNum,
-        amount: totalAmount,
+  // 1. Mark the bill PAID with the real payment breakdown
+  const paidBill = {
+    ...bill,
+    payment_status: 'PAID',
+    payment_method: payment_method,
+    cash_amount: cashAmt,
+    online_amount: onlineAmt,
+    total_paid: totalAmount,
+    payment_date: paymentIST.date,
+    payment_time: paymentIST.time12h + ' IST',
+    paid_at: now.toISOString()
+  };
+
+  if (USE_DB) {
+    // Mark all unpaid completed orders of this session as paid
+    const { data: unpaidOrders } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('session_id', session.id)
+      .eq('order_status', 'COMPLETED')
+      .eq('payment_status', 'UNPAID');
+    for (const o of (unpaidOrders || [])) {
+      await supabase.from('orders').update({
+        payment_status: 'PAID',
         payment_method: payment_method,
         cash_amount: cashAmt,
         online_amount: onlineAmt,
-        payment_status: 'PAID',
-        paid_at: now.toISOString(),
-        created_at: now.toISOString()
-      };
-      // Persist the payment record. If the split columns are missing in Supabase,
-      // retry WITHOUT them but keep the full payment in memory — never silently
-      // discard the cash/online breakdown the user entered.
-      try {
-        const payResult = await supabase.from('payments').insert(payment);
-        if (payResult.error) {
-          console.warn('[PAYMENT] Supabase insert error:', payResult.error.message, 'code:', payResult.error.code);
-          const payColumnErr = payResult.error.message && payResult.error.message.includes('column');
-          const payConstraintErr = payResult.error.code === '23514' || (payResult.error.message && payResult.error.message.includes('check constraint'));
-          if (payColumnErr) {
-            console.warn('[PAYMENT] payments.cash_amount/online_amount missing — retrying without split breakdown. Run supabase/migrations/20260914_001_fix_payment_schema.sql to fix.');
-            const fallbackPayment = { ...payment };
-            delete fallbackPayment.cash_amount;
-            delete fallbackPayment.online_amount;
-            const payRetry = await supabase.from('payments').insert(fallbackPayment);
-            if (payRetry.error) {
-              console.warn('[PAYMENT] Fallback payment insert failed:', payRetry.error.message, '— payment kept in memory only.');
-              db.payments.push(payment);
-            }
-          } else if (payConstraintErr) {
-            console.warn('[PAYMENT] payment_method CHECK constraint rejected ' + payment_method + ' — payment kept in memory. Run supabase/migrations/20260914_001_fix_payment_schema.sql to allow SPLIT.');
-            db.payments.push(payment);
-          } else {
-            db.payments.push(payment);
-          }
-        }
-      } catch(e) {
-        console.error('[PAYMENT] Payment insert exception:', e.message, '— payment kept in memory only.');
-        db.payments.push(payment);
-      }
+        paid_at: now.toISOString()
+      }).eq('id', o.id);
+    }
 
-      // Close the session
-      await supabase.from('table_sessions').update({
+    // Update the bill row (bill was created UNPAID by generate-bill)
+    const billUpdate = {
+      payment_status: 'PAID',
+      payment_method: payment_method,
+      cash_amount: cashAmt,
+      online_amount: onlineAmt,
+      payment_date: paymentIST.date,
+      payment_time: paymentIST.time12h + ' IST',
+      paid_at: now.toISOString()
+    };
+    let billUpdateErr;
+    try {
+      const r = await supabase.from('bills').update(billUpdate).eq('bill_number', bill.bill_number);
+      billUpdateErr = r.error;
+    } catch (e) { billUpdateErr = e; }
+    if (billUpdateErr) {
+      console.warn('[PAYMENT] Bill update error:', billUpdateErr.message, '— bill kept in memory with full breakdown.');
+    }
+    // Always keep the complete paid bill in memory (Supabase may lack columns).
+    const memIdx = db.bills.findIndex(b => b.bill_number === bill.bill_number);
+    if (memIdx !== -1) db.bills[memIdx] = paidBill; else db.bills.push(paidBill);
+
+    // Create payment record (persisted where possible, always kept in memory)
+    const payment = {
+      id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+      session_id: session.id,
+      bill_id: bill.bill_number,
+      table: tableNum,
+      amount: totalAmount,
+      payment_method: payment_method,
+      cash_amount: cashAmt,
+      online_amount: onlineAmt,
+      payment_status: 'PAID',
+      paid_at: now.toISOString(),
+      created_at: now.toISOString()
+    };
+    try {
+      const payResult = await supabase.from('payments').insert(payment);
+      if (payResult.error) {
+        console.warn('[PAYMENT] Supabase payment insert error:', payResult.error.message, 'code:', payResult.error.code);
+        const payColumnErr = payResult.error.message && payResult.error.message.includes('column');
+        if (payColumnErr) {
+          const fallbackPayment = { ...payment };
+          delete fallbackPayment.bill_id;
+          delete fallbackPayment.cash_amount;
+          delete fallbackPayment.online_amount;
+          const payRetry = await supabase.from('payments').insert(fallbackPayment);
+          if (payRetry.error) console.warn('[PAYMENT] Fallback payment insert failed:', payRetry.error.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[PAYMENT] Payment insert exception:', e.message);
+    }
+    db.payments.push(payment);
+
+    // 2. Close the session → table becomes AVAILABLE for the next customer
+    try {
+      const closeResult = await supabase.from('table_sessions').update({
         status: 'SETTLED',
         settled_at: now.toISOString(),
         total_amount: totalAmount,
         payment_method: payment_method
       }).eq('id', session.id);
-
-      // Generate ONE bill for the entire session
-      const billNumber = await generateBillNumber();
-      const bill = {
-        id: 'BILL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
-        bill_number: billNumber,
-        session_id: session.id,
-        table: tableNum,
-        orders: unpaidOrders.map(o => ({
-          id: o.id,
-          items: o.items,
-          total: o.total,
-          time: o.time
-        })),
-        total: totalAmount,
-        payment_method: payment_method,
-        cash_amount: cashAmt,
-        online_amount: onlineAmt,
-        payment_date: paymentIST.date,
-        payment_time: paymentIST.time12h + ' IST',
-        created_at: now.toISOString()
-      };
-      let billInsertErr;
-      try {
-        const insertResult = await supabase.from('bills').insert(bill);
-        billInsertErr = insertResult.error;
-      } catch(e) { billInsertErr = e; }
-      if (billInsertErr) {
-        console.warn('[BILLS] Supabase insert error:', billInsertErr.message, 'code:', billInsertErr.code);
-        // Handle column errors (missing cash_amount/online_amount) OR constraint errors (SPLIT not allowed)
-        const isColumnErr = billInsertErr.message && billInsertErr.message.includes('column');
-        const isConstraintErr = billInsertErr.code === '23514' || (billInsertErr.message && billInsertErr.message.includes('check constraint'));
-        if (isColumnErr) {
-          // Split columns missing in Supabase. Insert the bill WITHOUT the breakdown so the
-          // bill itself is still persisted, but keep the FULL bill (with the real
-          // cash/online values) in memory so the API/UI never shows fake zeros.
-          console.warn('[BILLS] bills.cash_amount/online_amount columns missing — inserting bill without split breakdown. Run supabase/migrations/20260914_001_fix_payment_schema.sql to fix permanently.');
-          const fallbackBill = { ...bill };
-          delete fallbackBill.cash_amount;
-          delete fallbackBill.online_amount;
-          let retry;
-          try { retry = await supabase.from('bills').insert(fallbackBill); } catch (e) { retry = { error: { message: 'fallback failed: ' + e.message } }; }
-          if (retry.error) {
-            console.warn('[BILLS] Fallback insert also failed — bill kept in memory only:', retry.error.message);
-          } else {
-            console.log('[BILLS] Bill inserted via fallback (without split breakdown):', bill.bill_number);
-          }
-          db.bills.push(bill); // full bill with real split values stays available to the API
-        } else if (isConstraintErr) {
-          // NEVER rewrite a SPLIT payment to CASH — that would corrupt financial history.
-          // Keep the truthful bill in memory and tell the operator how to fix the DB.
-          console.warn('[BILLS] payment_method CHECK constraint rejected ' + payment_method + ' — bill kept in memory with correct method. Run supabase/migrations/20260914_001_fix_payment_schema.sql to allow SPLIT.');
-          db.bills.push(bill);
-        } else {
-          console.warn('[BILLS] Unhandled insert error — saving to in-memory:', billInsertErr.message);
-          db.bills.push(bill);
-        }
+      if (closeResult.error && closeResult.error.message && closeResult.error.message.includes('check')) {
+        await supabase.from('table_sessions').update({
+          status: 'SETTLED',
+          settled_at: now.toISOString(),
+          total_amount: totalAmount
+        }).eq('id', session.id);
       }
-
-      return { payment, bill };
-    } else {
-      // In-memory fallback
-      unpaidOrders.forEach(o => {
+    } catch (e) { /* non-fatal */ }
+    session.status = 'SETTLED';
+    session.settled_at = now.toISOString();
+    session.total_amount = totalAmount;
+    session.payment_method = payment_method;
+  } else {
+    // In-memory fallback
+    db.orders.forEach(o => {
+      if (o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID') {
         o.payment_status = 'PAID';
         o.payment_method = payment_method;
+        o.cash_amount = cashAmt;
+        o.online_amount = onlineAmt;
         o.paid_at = now.toISOString();
-      });
+      }
+    });
+    const memIdx = db.bills.findIndex(b => b.bill_number === bill.bill_number);
+    if (memIdx !== -1) db.bills[memIdx] = paidBill; else db.bills.push(paidBill);
 
-      const payment = {
-        id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
-        session_id: session.id,
-        table: tableNum,
-        amount: totalAmount,
-        payment_method: payment_method,
-        cash_amount: cashAmt,
-        online_amount: onlineAmt,
-        payment_status: 'PAID',
-        paid_at: now.toISOString(),
-        created_at: now.toISOString()
-      };
-      db.payments.push(payment);
-
-      const billNumber = await generateBillNumber();
-      const bill = {
-        id: 'BILL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
-        bill_number: billNumber,
-        session_id: session.id,
-        table: tableNum,
-        orders: unpaidOrders.map(o => ({
-          id: o.id,
-          items: o.items,
-          total: o.total,
-          time: o.time
-        })),
-        total: totalAmount,
-        payment_method: payment_method,
-        cash_amount: cashAmt,
-        online_amount: onlineAmt,
-        payment_date: paymentIST.date,
-        payment_time: paymentIST.time12h + ' IST',
-        created_at: now.toISOString()
-      };
-      db.bills.push(bill);
-
-      return { payment, bill };
-    }
-  }
-
-  if (USE_DB) {
-    // Idempotency: check if session already settled
-    if (session.status === 'SETTLED') {
-      return res.status(400).json({ error: 'This session has already been paid and settled.' });
-    }
-
-    const { data: unpaidOrders } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('session_id', session.id)
-      .eq('order_status', 'COMPLETED')
-      .eq('payment_status', 'UNPAID');
-
-    const result = await processPayment(unpaidOrders || [], 'db');
-    if (result.error) return res.status(400).json({ error: result.error });
+    const payment = {
+      id: 'PAY-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
+      session_id: session.id,
+      bill_id: bill.bill_number,
+      table: tableNum,
+      amount: totalAmount,
+      payment_method: payment_method,
+      cash_amount: cashAmt,
+      online_amount: onlineAmt,
+      payment_status: 'PAID',
+      paid_at: now.toISOString(),
+      created_at: now.toISOString()
+    };
+    db.payments.push(payment);
 
     session.status = 'SETTLED';
     session.settled_at = now.toISOString();
-    session.total_amount = result.bill.total;
+    session.total_amount = totalAmount;
     session.payment_method = payment_method;
-
-    // Close the session in DB (may fail if payment_method CHECK doesn't include SPLIT)
-    try {
-      const closeResult = await supabase.from('table_sessions').update({
-        status: 'SETTLED',
-        settled_at: now.toISOString(),
-        total_amount: result.bill.total,
-        payment_method: payment_method
-      }).eq('id', session.id);
-      if (closeResult.error) {
-        // If CHECK constraint fails for SPLIT, try without payment_method
-        if (closeResult.error.message && closeResult.error.message.includes('check')) {
-          await supabase.from('table_sessions').update({
-            status: 'SETTLED',
-            settled_at: now.toISOString(),
-            total_amount: result.bill.total
-          }).eq('id', session.id);
-        }
-      }
-    } catch(e) { /* session already updated in memory */ }
-
-    console.log(`[PAYMENT] Bill created: ${result.bill.bill_number}`);
-    console.log(`[PAYMENT] Session closed: ${session.id}`);
-    console.log(`[TABLE PAID] Table ${tableNum} - ₹${result.bill.total} - ${payment_method} - Session ${session.id}`);
-    console.log(`[SSE] Broadcasting table_paid for Table ${tableNum}`);
-    broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: result.bill.total, payment_method });
-    return res.json({ success: true, payment: result.payment, session, bill: result.bill });
   }
 
-  // In-memory: idempotency check
-  if (session.status === 'SETTLED') {
-    return res.status(400).json({ error: 'This session has already been paid and settled.' });
-  }
-
-  const unpaidOrders = db.orders.filter(o => o.session_id === session.id && o.order_status === 'COMPLETED' && o.payment_status === 'UNPAID');
-  const result = await processPayment(unpaidOrders, 'mem');
-  if (result.error) return res.status(400).json({ error: result.error });
-
-  session.status = 'SETTLED';
-  session.settled_at = now.toISOString();
-  session.total_amount = result.bill.total;
-  session.payment_method = payment_method;
-
-  console.log(`[TABLE PAID] Table ${tableNum} - ₹${result.bill.total} - ${payment_method} - Session ${session.id}`);
-  broadcastSSE('table_paid', { table: tableNum, session_id: session.id, amount: result.bill.total, payment_method });
-  res.json({ success: true, payment: result.payment, session, bill: result.bill });
+  console.log(`[PAYMENT RECORDED] Bill ${bill.bill_number} — Table ${tableNum} — ₹${totalAmount} — ${payment_method}`);
+  console.log(`[SESSION CLOSED] ${session.id} — Table ${tableNum} AVAILABLE`);
+  broadcastSSE('table_paid', { table: tableNum, session_id: session.id, bill_number: bill.bill_number, amount: totalAmount, payment_method, cash_amount: cashAmt, online_amount: onlineAmt });
+  res.json({ success: true, payment: db.payments[db.payments.length - 1], session, bill: paidBill });
 }));
 
 // Get all bills (admin)
@@ -1187,10 +1388,13 @@ app.get('/api/bills', authMiddleware, asyncWrap(async (req, res) => {
       // Also include any in-memory bills not yet in Supabase.
       // If a bill_number exists in BOTH, prefer the in-memory version — it carries the
       // complete cash_amount/online_amount breakdown even when Supabase lacks the columns.
+      // Also: a PAID in-memory bill must shadow a stale UNPAID Supabase row
+      // (happens when the Supabase update itself failed on missing columns).
       const supaBillIds = new Set((bills || []).map(b => b.bill_number));
       const memOnly = db.bills.filter(b => !supaBillIds.has(b.bill_number));
       const shadowed = db.bills.filter(b => supaBillIds.has(b.bill_number));
-      const deduped = [...shadowed, ...(bills || []).filter(sb => !shadowed.some(mb => mb.bill_number === sb.bill_number)), ...memOnly];
+      const shadowedNums = new Set(shadowed.map(b => b.bill_number));
+      const deduped = [...shadowed, ...(bills || []).filter(sb => !shadowedNums.has(sb.bill_number)), ...memOnly];
       deduped.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       return res.json(deduped);
     } catch(e) {
@@ -1313,7 +1517,8 @@ app.get('/api/earnings', authMiddleware, asyncWrap(async (req, res) => {
     }
     const memDayBills = db.bills.filter(b => b.payment_date === targetDate);
     const memBillIds = new Set(memDayBills.map(b => b.bill_number));
-    const bills = [...supaDayBills.filter(b => !memBillIds.has(b.bill_number)), ...memDayBills];
+    // Only PAID bills count as revenue — UNPAID bills are not yet earnings.
+    const bills = [...supaDayBills.filter(b => !memBillIds.has(b.bill_number)), ...memDayBills].filter(b => (b.payment_status || 'PAID') === 'PAID');
 
     if (bills.length === 0 && supaDayBills.length === 0 && memDayBills.length === 0) {
       console.log('[EARNINGS] No bills found (Supabase: 0, In-memory: 0)');
@@ -1354,8 +1559,8 @@ app.get('/api/earnings', authMiddleware, asyncWrap(async (req, res) => {
     });
   }
 
-  // In-memory fallback: use bills
-  const dayBills = db.bills.filter(b => b.payment_date === targetDate);
+  // In-memory fallback: use bills (PAID only — unpaid bills are not revenue)
+  const dayBills = db.bills.filter(b => b.payment_date === targetDate && (b.payment_status || 'PAID') === 'PAID');
   const totalEarnings = dayBills.reduce((s, b) => s + Number(b.total || 0), 0);
   let cashTotal = 0;
   let onlineTotal = 0;
@@ -1538,8 +1743,9 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
       console.warn('[REPORTS] Bills query exception:', billsErr.message);
     }
 
-    // Merge with in-memory bills (bills that failed Supabase insert)
-    const memBills = db.bills.filter(b => b.payment_date >= from && b.payment_date <= to);
+    // Merge with in-memory bills (bills that failed Supabase insert). Only PAID
+    // bills count as revenue — UNPAID bills are not yet earnings.
+    const memBills = db.bills.filter(b => b.payment_date >= from && b.payment_date <= to && (b.payment_status || 'PAID') === 'PAID');
     const memBillIds = new Set(memBills.map(b => b.bill_number));
     // Add Supabase bills not already in memory, then add all memory bills
     const supaOnlyBills = supaBills.filter(b => !memBillIds.has(b.bill_number));
@@ -1583,8 +1789,8 @@ app.get('/api/reports', authMiddleware, asyncWrap(async (req, res) => {
     });
   }
 
-  // In-memory fallback: use bills for earnings
-  const allBills = db.bills.filter(b => b.payment_date >= from && b.payment_date <= to);
+  // In-memory fallback: use bills for earnings (PAID only — unpaid ≠ revenue)
+  const allBills = db.bills.filter(b => b.payment_date >= from && b.payment_date <= to && (b.payment_status || 'PAID') === 'PAID');
   const totalEarnings = allBills.reduce((sum, b) => sum + Number(b.total || 0), 0);
   let cashTotal = 0, onlineTotal = 0;
   for (const b of allBills) {
@@ -1644,9 +1850,10 @@ app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
         .eq('payment_date', today);
       if (!dashBillsResult.error) dashBills = dashBillsResult.data || [];
     } catch(e) { /* continue */ }
-    const dashMemBills = db.bills.filter(b => b.payment_date === today);
+    const dashMemBills = db.bills.filter(b => b.payment_date === today && (b.payment_status || 'PAID') === 'PAID');
     const dashMemIds = new Set(dashMemBills.map(b => b.bill_number));
-    const bills = [...dashBills.filter(b => !dashMemIds.has(b.bill_number)), ...dashMemBills];
+    // Only PAID bills count as revenue — UNPAID bills are not yet earnings.
+    const bills = [...dashBills.filter(b => !dashMemIds.has(b.bill_number)), ...dashMemBills].filter(b => (b.payment_status || 'PAID') === 'PAID');
     const earnings = bills.reduce((s, b) => s + Number(b.total || 0), 0);
     let cashTotal = 0, onlineTotal = 0;
     for (const b of bills) {
@@ -1682,7 +1889,7 @@ app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
   const allOrders = db.orders;
   const todayOrders = allOrders.filter(o => o.date === today);
   const pending = allOrders.filter(o => o.order_status === 'PENDING');
-  const todayBills = db.bills.filter(b => b.payment_date === today);
+  const todayBills = db.bills.filter(b => b.payment_date === today && (b.payment_status || 'PAID') === 'PAID');
   const earnings = todayBills.reduce((s, b) => s + Number(b.total || 0), 0);
   let cashTotal = 0, onlineTotal = 0;
   for (const b of todayBills) {
@@ -1719,6 +1926,17 @@ app.get('/api/dashboard', authMiddleware, asyncWrap(async (req, res) => {
 // ===========================
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// TEMPORARY E2E SINK — receives test results from the #e2e harness (local only).
+let __e2eResults = null;
+app.post('/__e2e_results', express.json(), (req, res) => {
+  __e2eResults = req.body || {};
+  console.log('[E2E] results received, failures:', __e2eResults.failures);
+  res.json({ ok: true });
+});
+app.get('/__e2e_results', (req, res) => {
+  res.json(__e2eResults || { pending: true });
 });
 
 // ===========================
@@ -1815,11 +2033,12 @@ app.get('/api/sessions/history', authMiddleware, asyncWrap(async (req, res) => {
     // Fetch bills for settled sessions in bulk
     const settledSessionIds = allSessions.filter(s => s.status === 'SETTLED').map(s => s.id);
     const billMap = new Map();
+    // In-memory bills always win — they carry the complete payment breakdown
+    // even when Supabase lacks the split columns.
+    db.bills.forEach(b => { if (settledSessionIds.includes(b.session_id)) billMap.set(b.session_id, b); });
     if (settledSessionIds.length > 0 && USE_DB) {
       const { data: bills } = await supabase.from('bills').select('*').in('session_id', settledSessionIds);
-      (bills || []).forEach(b => billMap.set(b.session_id, b));
-    } else if (settledSessionIds.length > 0) {
-      db.bills.forEach(b => { if (settledSessionIds.includes(b.session_id)) billMap.set(b.session_id, b); });
+      (bills || []).forEach(b => { if (!billMap.has(b.session_id)) billMap.set(b.session_id, b); });
     }
 
     // Fallback: for sessions with 0 orders, try to find orders by table+time window
@@ -2016,8 +2235,14 @@ app.get('/api/sessions/:sessionId', authMiddleware, asyncWrap(async (req, res) =
 
     let billInfo = null;
     if (session.status === 'SETTLED') {
-      const { data: bill } = await supabase.from('bills').select('*').eq('session_id', sessionId).maybeSingle();
-      billInfo = bill;
+      // Prefer the in-memory bill (complete record) over a possibly-stale Supabase row.
+      const memBill = db.bills.find(b => b.session_id === sessionId);
+      if (memBill) {
+        billInfo = memBill;
+      } else {
+        const { data: bill } = await supabase.from('bills').select('*').eq('session_id', sessionId).maybeSingle();
+        billInfo = bill;
+      }
     }
 
     const enrichedOrders = finalOrders.map(o => {
