@@ -5,6 +5,30 @@ const isAdminPage = (window.location.hash === '#admin');
 // MENU is defined as a global in index.html before this script loads.
 
 // ===========================
+// MENU IMAGE FALLBACK
+// ===========================
+// Menu image URLs live directly in index.html as deployment-safe, root-absolute,
+// per-segment URL-encoded paths (e.g. /food-images/Appetizers/Crispy%20Onion%20Rings%2012%20Pcs.jpg).
+// If an image ever fails to load, swap it for a branded placeholder so a
+// broken-image icon is never shown to the customer.
+const MENU_IMAGE_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">' +
+    '<rect width="600" height="400" fill="#E8DDCC"/>' +
+    '<circle cx="300" cy="172" r="60" fill="none" stroke="#B89A5A" stroke-width="3" opacity="0.65"/>' +
+    '<circle cx="300" cy="172" r="38" fill="none" stroke="#9BA58B" stroke-width="2" opacity="0.7"/>' +
+    '<text x="300" y="284" text-anchor="middle" font-family="Georgia,serif" font-size="24" fill="#394B32" opacity="0.75">THE OREGANO CAFE</text>' +
+    '<text x="300" y="314" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" letter-spacing="4" fill="#B89A5A">IMAGE COMING SOON</text>' +
+  '</svg>'
+);
+function handleMenuImageError(img) {
+  if (!img || img.dataset.fallbackApplied) return;
+  img.dataset.fallbackApplied = '1';
+  img.onerror = null; // guard against a broken fallback looping
+  img.src = MENU_IMAGE_PLACEHOLDER;
+  img.style.objectFit = 'contain';
+}
+
+// ===========================
 // APP STATE
 // ===========================
 let currentTable = null;
@@ -328,7 +352,7 @@ function buildMenu(){
       const itemIcon=getItemIcon(item,cat);
       html+='<div class="menu-card" data-key="'+key+'">';
       html+='<div class="menu-card-icon">'+itemIcon+'</div>';
-      html+='<img class="menu-card-img" src="'+item.img+'" alt="'+item.name+'" loading="lazy">';
+      html+='<img class="menu-card-img" src="'+item.img+'" alt="'+item.name+'" loading="lazy" onerror="handleMenuImageError(this)">';
       html+='<div class="menu-card-body">';
       html+='<div class="menu-card-name">'+item.name+'</div>';
       if(item.desc) html+='<div class="menu-card-desc">'+item.desc+'</div>';
@@ -785,7 +809,7 @@ $('searchField').addEventListener('input',function(){
   let html='';
   results.forEach(r=>{
     html+='<div class="search-item" onclick="handleAddClick('+r.ci+','+r.ii+');$(\'searchOverlay\').classList.remove(\'active\')">';
-    html+='<img class="search-item-img" src="'+r.item.img+'" alt="'+r.item.name+'">';
+    html+='<img class="search-item-img" src="'+r.item.img+'" alt="'+r.item.name+'" onerror="handleMenuImageError(this)">';
     html+='<div class="search-item-info"><h4>'+r.item.name+'</h4><p>'+r.cat+'</p></div>';
     html+='<span class="search-item-price">'+formatPrice(r.item.price)+'</span>';
     html+='</div>';

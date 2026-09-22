@@ -212,8 +212,16 @@ const orderMeta = new Map();
 
 // Middleware
 app.use(express.json());
+
+// ===========================
+// STATIC ASSETS
+// ===========================
+// Everything static lives in public/. This is the directory Vercel serves from
+// its edge/CDN in production, and the directory Express serves locally, so the
+// same "/food-images/..." URLs work in both environments.
+// This MUST be registered before the SPA catch-all at the bottom of this file
+// so an image request is never answered with index.html.
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(path.join(__dirname))); // fallback for root files during local dev
 
 // Async error wrapper — Express 4 does NOT catch async route handler errors
 function asyncWrap(fn) {
@@ -2352,7 +2360,15 @@ app.delete('/api/sessions/:sessionId', authMiddleware, asyncWrap(async (req, res
 // ===========================
 // CATCH-ALL — serve index.html for SPA routes
 // ===========================
+// Requests for missing static assets (images, styles, scripts, fonts, ...)
+// must return a real 404 — never index.html. Returning HTML for an <img> src
+// is exactly what produced the broken-image icons in production, because it is
+// served with a 200 status and a text/html content type.
+const STATIC_ASSET_EXTENSION = /\.(?:avif|bmp|css|eot|gif|ico|jpe?g|js|mjs|map|mp4|otf|pdf|png|svg|ttf|webm|webp|woff2?)$/i;
 app.get('*', (req, res) => {
+  if (STATIC_ASSET_EXTENSION.test(req.path)) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
