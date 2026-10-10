@@ -10,6 +10,12 @@ let currentTableBillNum = null;
 let currentBillTotal = 0; // authoritative total for SPLIT validation (from server)
 let currentBillNumber = null; // bill currently being processed
 
+// Per-item editing state (View Order)
+let currentViewOrderId = null;   // order open in the View Order modal
+let currentViewOrder = null;     // cached payload for the open modal
+let replaceCtx = null;           // active replacement flow context
+let itemActionInFlight = false;  // guards against double-clicks on item actions
+
 // Validate a SPLIT payment client-side. Mirrors the server rule:
 // cash_amount + online_amount MUST equal the bill total exactly.
 function validateSplitAmounts(total) {
@@ -99,6 +105,16 @@ function connectSSE() {
   });
   sseSource.addEventListener('order_deleted', e => {
     console.log('[SSE] order_deleted received, refreshing current section:', currentAdminSection);
+    renderAdminSection(currentAdminSection).catch(() => {});
+  });
+  sseSource.addEventListener('order_items_updated', e => {
+    console.log('[SSE] order_items_updated received, refreshing current section:', currentAdminSection);
+    let payload = {};
+    try { payload = JSON.parse(e.data || '{}'); } catch (err) { /* ignore */ }
+    // Keep an open View Order modal in sync (unless a replacement is mid-flow).
+    if (currentViewOrderId && payload.order_id === currentViewOrderId && !replaceCtx && $('adminModal') && $('adminModal').classList.contains('active')) {
+      renderViewOrder(currentViewOrderId).catch(() => {});
+    }
     renderAdminSection(currentAdminSection).catch(() => {});
   });
   sseSource.addEventListener('table_paid', e => {
@@ -423,7 +439,9 @@ function renderOrders(el, orders, status) {
 }
 
 function orderCardHTML(o) {
-  const items = o.items.map(i => i.qty + ' × ' + i.name).join('<br>');
+  const items = o.items.map(i => (i && i.status === 'CANCELLED')
+    ? '<span style="text-decoration:line-through;opacity:.55">' + i.qty + ' × ' + i.name + ' (cancelled)</span>'
+    : i.qty + ' × ' + i.name).join('<br>');
   let paymentInfo = '';
   if (o.payment_status === 'PAID') {
     const methodLabel = o.payment_method === 'SPLIT' ? 'SPLIT' : (o.payment_method || '');
@@ -449,6 +467,7 @@ function orderCardHTML(o) {
       <div class="order-card-actions">
         <span class="status-badge status-completed">COMPLETED</span>
         ${paymentInfo}
+        <button class="btn-view" onclick="viewOrder('${o.id}')">VIEW ORDER</button>
         <button class="btn-remove" onclick="confirmDeleteOrder('${o.id}')">REMOVE ORDER</button>
       </div>
     `;
@@ -457,6 +476,7 @@ function orderCardHTML(o) {
       <div class="order-card-actions">
         <span class="status-badge status-cancelled">CANCELLED</span>
         ${paymentInfo}
+        <button class="btn-view" onclick="viewOrder('${o.id}')">VIEW ORDER</button>
         <button class="btn-remove" onclick="confirmDeleteOrder('${o.id}')">REMOVE ORDER</button>
       </div>
     `;
@@ -477,13 +497,42 @@ function orderCardHTML(o) {
 }
 
 // ===========================
-// VIEW ORDER MODAL
+// VIEW ORDER MODAL — with per-item Replace / Cancel controls
 // ===========================
+// A request helper that PRESERVES the server error message (unlike apiCall, which
+// swallows it). Used for item edits so staff see exactly why a change was rejected.
+async function apiCallEx(method, path, body) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const opts = { method, headers: { 'Content-Type': 'application/json' }, signal: controller.signal };
+    if (API_TOKEN) opts.headers['X-Admin-Token'] = API_TOKEN;
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(API_BASE + path, opts);
+    clearTimeout(timeout);
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) return { ok: false, status: res.status, error: (data && data.error) || ('Request failed (' + res.status + ')') };
+    return { ok: true, status: res.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, error: 'Network error. Please check the connection and try again.' };
+  }
+}
+
 async function viewOrder(orderId) {
-  const orders = await loadOrders();
-  const o = orders.find(or => or.id === orderId);
-  if (!o) return;
-  const items = o.items.map(i => `<div class="report-row"><span>${i.qty} × ${i.name}</span><span>${formatPrice(i.price * i.qty)}</span></div>`).join('');
+  currentViewOrderId = orderId;
+  await renderViewOrder(orderId);
+  $('adminModal').classList.add('active');
+}
+
+async function renderViewOrder(orderId) {
+  const o = await apiCall('GET', '/orders/' + orderId);
+  if (!o || o.error) { showToast('Order not found'); return; }
+  currentViewOrder = o;
+  currentViewOrderId = o.id;
+
+  const modifiable = o.order_status !== 'CANCELLED' && o.payment_status !== 'PAID' && !o.bill_locked;
+  const items = (o.items || []).map((it, i) => orderItemBlockHTML(o, it, i, modifiable)).join('');
 
   let paymentInfo = '';
   if (o.payment_status === 'PAID') {
@@ -494,11 +543,14 @@ async function viewOrder(orderId) {
     paymentInfo = `<div style="margin-bottom:8px"><span class="status-badge status-na">NOT APPLICABLE</span></div>`;
   }
 
-  let typeLine='';
+  let lockNote = '';
+  if (o.bill_locked && o.order_status !== 'CANCELLED') {
+    lockNote = '<div class="item-lock-note">A bill has already been generated for this session — item changes are locked to protect financial records.</div>';
+  }
+
   $('adminModalBox').innerHTML = `
     <h3>ORDER #${o.id}</h3>
     <div style="margin-bottom:8px"><strong>TABLE ${o.table}</strong></div>
-    ${typeLine}
     ${o.session_id ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Session: ' + o.session_id + '</div>' : ''}
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">ORDERED AT: ${o.time} · ${o.date}</div>
     <div style="margin-bottom:8px"><span class="status-badge status-${o.order_status.toLowerCase()}">${o.order_status}</span></div>
@@ -506,16 +558,351 @@ async function viewOrder(orderId) {
     ${o.completed_at ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Served: ' + formatISTFull(new Date(o.completed_at)) + '</div>' : ''}
     ${o.cancelled_at ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Cancelled: ' + formatISTFull(new Date(o.cancelled_at)) + '</div>' : ''}
     ${o.paid_at ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Paid: ' + formatISTFull(new Date(o.paid_at)) + '</div>' : ''}
-    <div style="border-top:1px solid var(--border);padding-top:12px">${items}</div>
+    ${lockNote}
+    <div style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px">${items}</div>
     <div class="report-row total-row" style="margin-top:12px"><span>TOTAL</span><span>${formatPrice(o.total)}</span></div>
     <div class="modal-admin-actions" style="margin-top:20px">
-      ${o.order_status === 'PENDING' ? `<button class="btn-save" onclick="confirmAction('${o.id}','complete');$('adminModal').classList.remove('active')">✓ COMPLETE</button><button class="btn-cancel-modal" style="background:var(--cancelled-red);color:#fff;border:none" onclick="confirmAction('${o.id}','cancel');$('adminModal').classList.remove('active')">✕ CANCEL</button>` : ''}
-      <button class="btn-cancel-modal" onclick="$('adminModal').classList.remove('active')">CLOSE</button>
+      ${o.order_status === 'PENDING' ? `<button class="btn-save" onclick="confirmAction('${o.id}','complete')">✓ COMPLETE</button><button class="btn-cancel-modal" style="background:var(--cancelled-red);color:#fff;border:none" onclick="confirmAction('${o.id}','cancel')">✕ CANCEL ORDER</button>` : ''}
+      <button class="btn-cancel-modal" onclick="closeViewOrder()">CLOSE</button>
     </div>
   `;
+}
+
+function closeViewOrder() {
+  replaceCtx = null;
+  currentViewOrderId = null;
+  currentViewOrder = null;
+  $('adminModal').classList.remove('active');
+}
+
+// One line of the View Order modal: name, qty, unit price, subtotal, options, status
+// and — when the order can still be edited — the REPLACE / CANCEL buttons.
+function orderItemBlockHTML(o, it, index, modifiable) {
+  // Never rely on a possibly-missing id: fall back to the same deterministic id the
+  // server assigns (I1, I2, ...), so the buttons always target a real line.
+  const itemId = (it && it.item_id) ? it.item_id : ('I' + (index + 1));
+  const cancelled = !!(it && it.status === 'CANCELLED');
+  const replaced = !!(it && it.replaced_from);
+  const unit = Number(it.price) || 0;
+  const qty = Number(it.qty) || 0;
+  const subtotal = unit * qty;
+  const opts = (it.options && it.options.length) ? '<div class="order-item-sub">Options: ' + it.options.join(', ') + '</div>' : '';
+  let badge = '<span class="status-badge status-pending">ACTIVE</span>';
+  if (cancelled) badge = '<span class="status-badge status-cancelled">CANCELLED</span>';
+  else if (replaced) badge = '<span class="status-badge status-completed">REPLACED</span>';
+
+  let note = '';
+  if (cancelled && it.cancelled_at) {
+    note = '<div class="order-item-sub">Cancelled at ' + formatISTFull(new Date(it.cancelled_at)) + ' · not charged</div>';
+  } else if (replaced && it.replaced_from) {
+    const rf = it.replaced_from;
+    const last = (it.replacements && it.replacements.length) ? it.replacements[it.replacements.length - 1] : null;
+    const diffTxt = last && last.price_difference ? ' · diff ' + (last.price_difference > 0 ? '+' : '−') + formatPrice(Math.abs(last.price_difference)) : '';
+    note = '<div class="order-item-sub">Originally: <strong>' + rf.name + '</strong> · ' + formatPrice(rf.price) + ' × ' + rf.qty + diffTxt + '</div>';
+  } else if (Array.isArray(it.cancellations) && it.cancellations.length) {
+    const units = it.cancellations.reduce((s, c) => s + (Number(c.qty) || 0), 0);
+    const amt = it.cancellations.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    note = '<div class="order-item-sub">' + units + ' unit(s) cancelled earlier · ' + formatPrice(amt) + ' removed from this line</div>';
+  }
+
+  const canEdit = modifiable && !cancelled;
+  const actions = canEdit
+    ? '<div class="order-item-actions">' +
+        '<button class="btn-view" onclick="openReplaceItem(\'' + o.id + '\',\'' + itemId + '\')">🔄 REPLACE ITEM</button>' +
+        '<button class="btn-remove" onclick="confirmCancelItem(\'' + o.id + '\',\'' + itemId + '\')">✕ CANCEL ITEM</button>' +
+      '</div>'
+    : '';
+
+  return '<div class="order-item-block">' +
+      '<div class="order-item-head">' +
+        '<div>' +
+          '<div class="order-item-name ' + (cancelled ? 'is-cancelled' : '') + '">' + qty + ' × ' + it.name + '</div>' +
+          '<div class="order-item-meta">' + formatPrice(unit) + ' each · ' + badge + '</div>' +
+        '</div>' +
+        '<div class="order-item-amount ' + (cancelled ? 'is-cancelled' : '') + '">' + (cancelled ? '₹0' : formatPrice(subtotal)) + '</div>' +
+      '</div>' +
+      opts + note + actions +
+    '</div>';
+}
+
+function newItemActionId() {
+  return 'ACT-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+async function refreshOpenOrder(orderId) {
+  await renderViewOrder(orderId);
+  renderAdminSection(currentAdminSection).catch(() => {});
+}
+
+// ---- CANCEL ITEM ----
+// Resolve a line from a stable id, falling back to the deterministic index id.
+function findOrderItem(order, itemId) {
+  if (!order) return null;
+  const items = order.items || [];
+  let item = items.find(i => i && i.item_id === itemId);
+  if (!item) {
+    const m = /^I(\d+)$/.exec(String(itemId || ''));
+    if (m) item = items[Number(m[1]) - 1];
+  }
+  return item || null;
+}
+
+function confirmCancelItem(orderId, itemId) {
+  const o = (currentViewOrder && currentViewOrder.id === orderId) ? currentViewOrder : null;
+  const item = findOrderItem(o, itemId);
+  const lineQty = item ? (Number(item.qty) || 1) : 1;
+  const name = item ? item.name : 'this item';
+  const unit = item ? (Number(item.price) || 0) : 0;
+  // Explicit quantity intent: a multi-unit line can be partly or fully cancelled.
+  const qtyField = lineQty > 1
+    ? '<div class="replace-qty-row"><label>Quantity to cancel</label><input type="number" id="cancelQty" min="1" max="' + lineQty + '" step="1" value="' + lineQty + '"></div>'
+    : '<input type="hidden" id="cancelQty" value="' + lineQty + '">';
+  $('adminConfirmBox').innerHTML = `
+    <h3>CANCEL THIS ITEM?</h3>
+    <p>Only the selected item is cancelled — every other item in this order stays exactly as it is.</p>
+    <p style="font-size:13px"><strong>${name}</strong> · ${formatPrice(unit)} each</p>
+    ${qtyField}
+    <p style="font-size:13px">Amount removed from the bill: <strong id="cancelAmount">${formatPrice(unit * lineQty)}</strong></p>
+    <p style="font-size:12px;color:var(--cancelled-red)">Confirm only after the customer has agreed to cancel.</p>
+    <div class="confirm-admin-actions">
+      <button class="btn-cancel-modal" onclick="$('adminConfirm').classList.remove('active')">GO BACK</button>
+      <button class="btn-save" id="confirmCancelBtn" style="background:var(--cancelled-red)" onclick="doCancelItem('${orderId}','${itemId}')">YES, CANCEL ITEM</button>
+    </div>
+  `;
+  const qEl = $('cancelQty');
+  if (qEl) {
+    const recalc = () => {
+      const n = Math.max(1, Math.min(lineQty, Math.floor(Number(qEl.value) || 1)));
+      const el = $('cancelAmount'); if (el) el.textContent = formatPrice(unit * n);
+    };
+    qEl.addEventListener('input', recalc);
+    recalc();
+  }
+  $('adminConfirm').classList.add('active');
+}
+
+async function doCancelItem(orderId, itemId) {
+  if (itemActionInFlight) return;
+  const qEl = $('cancelQty');
+  const qty = qEl ? Math.max(1, Math.floor(Number(qEl.value) || 1)) : null;
+  const btn = $('confirmCancelBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'CANCELLING...'; }
+  itemActionInFlight = true;
+  const payload = { action: 'cancel_item', item_id: itemId, action_id: newItemActionId() };
+  if (qty != null) payload.qty = qty;
+  const res = await apiCallEx('PATCH', '/orders/' + orderId, payload);
+  itemActionInFlight = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'YES, CANCEL ITEM'; }
+  $('adminConfirm').classList.remove('active');
+  if (res.ok && res.data && res.data.success) {
+    showToast(res.data.order_cancelled
+      ? '✓ Item cancelled — order fully cancelled (no items left)'
+      : (res.data.already_cancelled ? 'Item was already cancelled' : '✓ Item cancelled'));
+    await refreshOpenOrder(orderId);
+  } else {
+    showToast(res.error || 'Could not cancel the item. Please try again.');
+  }
+}
+
+// ---- REPLACE ITEM ----
+// The complete cafe menu (every category, every dish) — the single source of truth
+// for replacements. Built from the same MENU data the customer menu renders.
+function flattenMenuItems() {
+  const out = [];
+  if (typeof MENU === 'undefined' || !MENU) return out;
+  MENU.forEach(cat => {
+    (cat.items || []).forEach(it => {
+      out.push({
+        cat: cat.cat,
+        name: it.name,
+        price: Number(it.price) || 0,
+        img: it.img || '',
+        hasOptions: !!(it.options && it.options.length),
+        options: it.options || []
+      });
+    });
+  });
+  return out;
+}
+
+// Ordered, de-duplicated list of menu categories for browsing.
+function replaceCategories() {
+  const seen = [];
+  (replaceCtx ? replaceCtx.menu : []).forEach(m => { if (m.cat && seen.indexOf(m.cat) === -1) seen.push(m.cat); });
+  return seen;
+}
+
+function setReplaceCategory(cat) {
+  if (!replaceCtx) return;
+  replaceCtx.activeCat = cat;
+  document.querySelectorAll('#replaceCats .admin-chip').forEach(c => c.classList.toggle('active', c.dataset.cat === cat));
+  const listEl = $('replaceList');
+  if (listEl) listEl.innerHTML = replaceRowsHTML($('replaceSearch') ? $('replaceSearch').value : '', cat);
+}
+
+async function openReplaceItem(orderId, itemId) {
+  const o = (currentViewOrder && currentViewOrder.id === orderId) ? currentViewOrder : await apiCall('GET', '/orders/' + orderId);
+  if (!o) { showToast('Order not found'); return; }
+  currentViewOrder = o;
+  currentViewOrderId = orderId;
+  const item = findOrderItem(o, itemId);
+  if (!item) { showToast('Item not found'); return; }
+  replaceCtx = { orderId, itemId, item, menu: flattenMenuItems(), selected: null, chosenOptions: [], activeCat: 'ALL' };
+  renderReplacePicker();
   $('adminModal').classList.add('active');
 }
-$('adminModal').addEventListener('click', e => { if (e.target === $('adminModal')) $('adminModal').classList.remove('active') });
+
+function replaceRowsHTML(query, cat) {
+  if (!replaceCtx) return '';
+  const q = (query || '').toLowerCase().trim();
+  let list = replaceCtx.menu;
+  if (cat && cat !== 'ALL') list = list.filter(m => m.cat === cat);
+  if (q) list = list.filter(m => m.name.toLowerCase().includes(q) || m.cat.toLowerCase().includes(q));
+  if (list.length === 0) return '<div class="admin-empty"><h3>NO DISHES FOUND</h3><p>Try another search or category.</p></div>';
+  return list.slice(0, 400).map(m => {
+    const idx = replaceCtx.menu.indexOf(m);
+    return '<div class="replace-item-row" onclick="selectReplacement(' + idx + ')">' +
+      (m.img ? '<img class="rir-img" src="' + m.img + '" alt="" loading="lazy" onerror="handleMenuImageError(this)">' : '') +
+      '<div class="rir-info"><div class="rir-name">' + m.name + '</div><div class="rir-cat">' + m.cat + '</div></div>' +
+      '<div class="rir-price">' + formatPrice(m.price) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderReplacePicker() {
+  if (!replaceCtx) return;
+  if (!replaceCtx.activeCat) replaceCtx.activeCat = 'ALL';
+  const item = replaceCtx.item;
+  const orig = (Number(item.price) || 0) * (Number(item.qty) || 0);
+  const cats = ['ALL'].concat(replaceCategories());
+  const chips = cats.map(c =>
+    '<button type="button" class="admin-chip' + (c === replaceCtx.activeCat ? ' active' : '') + '" data-cat="' + String(c).replace(/"/g, '&quot;') + '" onclick="setReplaceCategory(this.dataset.cat)">' + c + '</button>'
+  ).join('');
+  $('adminModalBox').innerHTML =
+    '<h3>REPLACE ITEM</h3>' +
+    '<div class="replace-summary">' +
+      '<div class="rs-label">Replacing (unavailable)</div>' +
+      '<div class="rs-row"><strong>' + (Number(item.qty) || 0) + ' × ' + item.name + '</strong><strong>' + formatPrice(orig) + '</strong></div>' +
+    '</div>' +
+    '<input type="text" class="replace-search" id="replaceSearch" placeholder="Search the complete menu by dish name..." autocomplete="off">' +
+    '<div class="replace-cat-chips" id="replaceCats">' + chips + '</div>' +
+    '<div class="replace-list" id="replaceList">' + replaceRowsHTML('', replaceCtx.activeCat) + '</div>' +
+    '<div class="modal-admin-actions"><button class="btn-cancel-modal" onclick="closeReplace()">KEEP ORIGINAL ITEM</button></div>';
+  const input = $('replaceSearch');
+  if (input) {
+    input.addEventListener('input', () => { const el = $('replaceList'); if (el) el.innerHTML = replaceRowsHTML(input.value, replaceCtx ? replaceCtx.activeCat : 'ALL'); });
+    input.focus();
+  }
+}
+
+function selectReplacement(idx) {
+  if (!replaceCtx) return;
+  const m = replaceCtx.menu[idx];
+  if (!m) return;
+  replaceCtx.selected = m;
+  replaceCtx.chosenOptions = m.hasOptions ? [m.options[0]] : [];
+  renderReplaceConfirm();
+}
+
+function renderReplaceConfirm() {
+  const ctx = replaceCtx;
+  if (!ctx || !ctx.selected) return;
+  const item = ctx.item;
+  const m = ctx.selected;
+  const origUnit = Number(item.price) || 0;
+  const origQty = Number(item.qty) || 0;
+  const defaultQty = origQty || 1;
+  const options = ctx.chosenOptions || [];
+  const optionsRow = options.length ? '<div class="rs-row"><span>Option</span><strong>' + options.join(', ') + '</strong></div>' : '';
+  // Every OTHER payable item in the order is untouched — fold it into the projected total.
+  const otherTotal = ((currentViewOrder && currentViewOrder.items) || [])
+    .filter(x => x && x !== item && x.status !== 'CANCELLED')
+    .reduce((s, x) => s + (Number(x.price) || 0) * (Number(x.qty) || 0), 0);
+
+  $('adminModalBox').innerHTML =
+    '<h3>CONFIRM REPLACEMENT</h3>' +
+    '<div class="replace-summary">' +
+      '<div class="rs-label">Original item (unavailable)</div>' +
+      '<div class="rs-row"><span>' + origQty + ' × ' + item.name + '</span><strong>' + formatPrice(origUnit * origQty) + '</strong></div>' +
+    '</div>' +
+    '<div class="replace-summary">' +
+      '<div class="rs-label">Replacement item</div>' +
+      '<div class="rs-row"><span>' + m.name + '</span><strong>' + formatPrice(m.price) + ' each</strong></div>' +
+      optionsRow +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px">Actual menu price — confirm the change and any price difference with the customer before applying.</div>' +
+    '</div>' +
+    '<div class="replace-qty-row"><label>Quantity</label><input type="number" id="replaceQty" min="1" max="99" step="1" value="' + defaultQty + '"></div>' +
+    '<div class="replace-summary">' +
+      '<div class="rs-row"><span>Original amount</span><strong id="rcOrig">' + formatPrice(origUnit * origQty) + '</strong></div>' +
+      '<div class="rs-row"><span>New amount</span><strong id="rcNew">' + formatPrice(m.price * defaultQty) + '</strong></div>' +
+      '<div class="replace-diff even" id="rcDiff"><span>Price difference</span><span>₹0</span></div>' +
+      '<div class="rs-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:8px"><span>Updated order total</span><strong id="rcTotal">' + formatPrice(otherTotal + m.price * defaultQty) + '</strong></div>' +
+    '</div>' +
+    '<div class="modal-admin-actions">' +
+      '<button class="btn-cancel-modal" onclick="backToReplacePicker()">BACK TO MENU</button>' +
+      '<button class="btn-save" id="confirmReplaceBtn" onclick="doReplaceItem()">CONFIRM REPLACEMENT</button>' +
+    '</div>';
+
+  const qtyInput = $('replaceQty');
+  if (qtyInput) {
+    const recalc = () => {
+      const q = Math.max(1, Math.min(99, Math.floor(Number(qtyInput.value) || 1)));
+      const orig = origUnit * origQty;
+      const next = m.price * q;
+      const diff = next - orig;
+      $('rcNew').textContent = formatPrice(next);
+      const d = $('rcDiff');
+      d.className = 'replace-diff ' + (diff > 0 ? 'up' : diff < 0 ? 'down' : 'even');
+      d.innerHTML = '<span>Price difference</span><span>' + (diff > 0 ? '+' : diff < 0 ? '−' : '') + formatPrice(Math.abs(diff)) + '</span>';
+      const t = $('rcTotal'); if (t) t.textContent = formatPrice(otherTotal + next);
+    };
+    qtyInput.addEventListener('input', recalc);
+    recalc();
+  }
+}
+
+function backToReplacePicker() {
+  if (!replaceCtx) return;
+  replaceCtx.selected = null;
+  renderReplacePicker();
+}
+
+function closeReplace() {
+  const orderId = replaceCtx ? replaceCtx.orderId : currentViewOrderId;
+  replaceCtx = null;
+  if (orderId) renderViewOrder(orderId).catch(() => {});
+  else $('adminModal').classList.remove('active');
+}
+
+async function doReplaceItem() {
+  const ctx = replaceCtx;
+  if (!ctx || !ctx.selected) return;
+  if (itemActionInFlight) return;
+  const qtyInput = $('replaceQty');
+  const qty = Math.max(1, Math.min(99, Math.floor(Number(qtyInput ? qtyInput.value : ctx.item.qty) || 1)));
+  const payload = {
+    action: 'replace_item',
+    item_id: ctx.itemId,
+    action_id: newItemActionId(),
+    replacement: { name: ctx.selected.name, price: ctx.selected.price, qty: qty, options: ctx.chosenOptions || [] }
+  };
+  const btn = $('confirmReplaceBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+  itemActionInFlight = true;
+  const res = await apiCallEx('PATCH', '/orders/' + ctx.orderId, payload);
+  itemActionInFlight = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'CONFIRM REPLACEMENT'; }
+  if (res.ok && res.data && res.data.success) {
+    const diff = Number(res.data.price_difference) || 0;
+    const diffTxt = diff === 0 ? 'no price change' : (diff > 0 ? '+' + formatPrice(diff) : '−' + formatPrice(Math.abs(diff)));
+    showToast('✓ Item replaced (' + diffTxt + ')');
+    replaceCtx = null;
+    await refreshOpenOrder(ctx.orderId);
+  } else {
+    showToast(res.error || 'Could not replace the item. Please try again.');
+  }
+}
+$('adminModal').addEventListener('click', e => { if (e.target === $('adminModal')) closeViewOrder() });
 
 // ===========================
 // CONFIRM ACTIONS (COMPLETE / CANCEL)
@@ -551,6 +938,8 @@ $('adminConfirm').addEventListener('click', e => { if (e.target === $('adminConf
 async function doAction(orderId, action) {
   const result = await apiCall('PATCH', '/orders/' + orderId, { action });
   $('adminConfirm').classList.remove('active');
+  // If the order was open in the View Order modal, close it — its state is now stale.
+  if (currentViewOrderId === orderId) closeViewOrder();
   showToast('✓ Order ' + (action === 'complete' ? 'completed' : 'cancelled') + ' successfully');
   renderAdminSection(currentAdminSection);
 }
@@ -713,10 +1102,15 @@ async function viewSession(sessionId) {
     else if (orderStatus === 'CANCELLED') statusColor = 'var(--cancelled-red)';
 
     const items = (o.items || []).map(item => {
+      const cancelled = !!(item && item.status === 'CANCELLED');
+      const replaced = !!(item && item.replaced_from);
       const opts = item.options && item.options.length > 0 ? '<br><span style="color:var(--muted);font-size:11px">' + item.options.join(', ') + '</span>' : '';
+      const tag = cancelled
+        ? ' <span style="color:var(--cancelled-red);font-size:10px;font-weight:700">(CANCELLED)</span>'
+        : (replaced ? ' <span style="color:var(--completed-green);font-size:10px;font-weight:700">(REPLACED)</span>' : '');
       return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">' +
-        '<span>' + item.qty + ' × ' + item.name + opts + '</span>' +
-        '<span>' + formatPrice(item.price * item.qty) + '</span>' +
+        '<span' + (cancelled ? ' style="text-decoration:line-through;opacity:.6"' : '') + '>' + item.qty + ' × ' + item.name + opts + tag + '</span>' +
+        '<span' + (cancelled ? ' style="text-decoration:line-through;opacity:.6"' : '') + '>' + formatPrice(item.price * item.qty) + '</span>' +
       '</div>';
     }).join('');
 

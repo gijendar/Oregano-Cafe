@@ -227,17 +227,72 @@ function buildCategories(){
   track.innerHTML='';
   MENU.forEach((cat,i)=>{
     const btn=document.createElement('button');
+    btn.type='button';
     btn.className='category-chip'+(i===activeCategory?' active':'');
     btn.textContent=cat.icon+' '+cat.cat;
     btn.addEventListener('click',()=>{
       activeCategory=i;
       document.querySelectorAll('.category-chip').forEach(c=>c.classList.remove('active'));
       btn.classList.add('active');
+      // Keep the selected category visible inside the horizontal navigation.
+      try { btn.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'}); } catch(e) {}
       const el=document.querySelector('.menu-category[data-cat="'+i+'"]');
-      if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+      if(el) el.scrollIntoView({behavior:'smooth',block:'start',inline:'nearest'});
     });
+    // Keyboard/tab focus also brings the chip into view.
+    btn.addEventListener('focus',()=>{ try { btn.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'}); } catch(e) {} });
     track.appendChild(btn);
   });
+  initCategoryNav();
+}
+
+// ===========================
+// CATEGORY NAV ARROWS (edge scroll controls)
+// ===========================
+function updateCategoryArrows(){
+  const scroller=$('categoryScroll'), left=$('catArrowLeft'), right=$('catArrowRight');
+  if(!scroller||!left||!right) return;
+  const maxScroll=scroller.scrollWidth - scroller.clientWidth;
+  const x=scroller.scrollLeft;
+  const atStart = x <= 2;
+  const atEnd = maxScroll <= 2 || x >= maxScroll - 2;
+  left.classList.toggle('cat-arrow-hidden', atStart);
+  right.classList.toggle('cat-arrow-hidden', atEnd);
+  left.disabled = atStart;
+  right.disabled = atEnd;
+  left.setAttribute('aria-hidden', atStart ? 'true' : 'false');
+  right.setAttribute('aria-hidden', atEnd ? 'true' : 'false');
+}
+
+function scrollCategories(dir){
+  const scroller=$('categoryScroll');
+  if(!scroller) return;
+  const amount=Math.max(180, Math.round(scroller.clientWidth*0.7));
+  scroller.scrollBy({left: dir*amount, behavior:'smooth'});
+}
+
+function initCategoryNav(){
+  const scroller=$('categoryScroll'), left=$('catArrowLeft'), right=$('catArrowRight');
+  if(!scroller) return;
+  if(left && !left.dataset.bound){ left.dataset.bound='1'; left.addEventListener('click',()=>scrollCategories(-1)); }
+  if(right && !right.dataset.bound){ right.dataset.bound='1'; right.addEventListener('click',()=>scrollCategories(1)); }
+  if(!scroller.dataset.bound){
+    scroller.dataset.bound='1';
+    scroller.addEventListener('scroll', updateCategoryArrows, {passive:true});
+    // Keyboard support: arrow keys move the strip while focus is inside it.
+    scroller.addEventListener('keydown', e => {
+      if(e.key==='ArrowRight'){ e.preventDefault(); scrollCategories(1); }
+      else if(e.key==='ArrowLeft'){ e.preventDefault(); scrollCategories(-1); }
+    });
+  }
+  if(!window.__catNavResizeBound){
+    window.__catNavResizeBound=true;
+    window.addEventListener('resize', updateCategoryArrows);
+  }
+  // Re-measure after layout/fonts settle so arrows reflect real overflow.
+  requestAnimationFrame(updateCategoryArrows);
+  setTimeout(updateCategoryArrows, 120);
+  setTimeout(updateCategoryArrows, 400);
 }
 
 // ===========================
@@ -710,7 +765,7 @@ async function loadMyBill(){
       '</div>';
   } else {
     // No bill generated yet — show a live preview of consumed items
-    const items = (result.orders || []).reduce((acc, o) => acc.concat((o.items || []).map(it => ({ name: it.name, qty: it.qty, price: it.price, options: it.options || [] }))), []);
+    const items = (result.orders || []).reduce((acc, o) => acc.concat((o.items || []).filter(it => it && it.status !== 'CANCELLED').map(it => ({ name: it.name, qty: it.qty, price: it.price, options: it.options || [] }))), []);
     if (!items.length) {
       content.innerHTML = '<div class="modal-handle"></div><div class="modal-title">MY BILL</div>' +
         '<p class="modal-desc">No items on your bill yet. Ask our staff for your bill when you are ready.</p>' +

@@ -516,6 +516,8 @@ function aggregatePayableItems(orders) {
   const items = [];
   for (const o of orders) {
     for (const it of (o.items || [])) {
+      // Cancelled items are never payable — they stay on the order for the audit trail only.
+      if (it && it.status === 'CANCELLED') continue;
       items.push({
         name: it.name,
         qty: Number(it.qty) || 0,
@@ -523,11 +525,97 @@ function aggregatePayableItems(orders) {
         total: (Number(it.price) || 0) * (Number(it.qty) || 0),
         options: it.options || [],
         order_id: o.id,
+        item_id: it.item_id || null,
         order_time: o.time || null
       });
     }
   }
   return items;
+}
+
+// ===========================
+// PER-ITEM ORDER EDITING HELPERS
+// Orders store their lines as a JSON array (orders.items). Each line now carries a
+// stable item_id so the admin View Order screen can address ONE line independently.
+// ===========================
+
+// Assign deterministic item_ids to any legacy line that is missing one.
+function ensureItemIds(order) {
+  let changed = false;
+  const items = Array.isArray(order.items) ? order.items.map((it, i) => {
+    if (it && typeof it === 'object' && !it.item_id) {
+      changed = true;
+      return { ...it, item_id: 'I' + (i + 1) };
+    }
+    return it;
+  }) : [];
+  if (changed) order.items = items;
+  return changed;
+}
+
+// Payable total = active (non-cancelled) lines only.
+function computeActiveOrderTotal(items) {
+  return (items || []).filter(it => it && it.status !== 'CANCELLED')
+    .reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+}
+
+// Serialize item edits per order so two simultaneous admin requests cannot clobber
+// each other (single Node instance — sufficient for the current deployment).
+const orderLocks = new Map();
+async function withOrderLock(key, fn) {
+  const prev = orderLocks.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise(res => { release = res; });
+  const tail = prev.then(() => gate);
+  orderLocks.set(key, tail);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (orderLocks.get(key) === tail) orderLocks.delete(key);
+  }
+}
+
+async function loadOrderRaw(orderId) {
+  if (USE_DB) {
+    const { data } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+    return data || null;
+  }
+  return db.orders.find(o => o.id === orderId) || null;
+}
+
+// A bill (paid or unpaid) locks its session's items — historical financial records
+// must never be silently rewritten.
+async function orderHasBill(order) {
+  if (!order || !order.session_id) return false;
+  if (USE_DB) {
+    try {
+      const { data, error } = await supabase
+        .from('bills')
+        .select('bill_number')
+        .eq('session_id', order.session_id)
+        .limit(1);
+      if (!error && data && data.length) return true;
+    } catch (e) { /* fall through to memory check */ }
+  }
+  return db.bills.some(b => b.session_id === order.session_id);
+}
+
+// Persist the edited item list + recalculated order total. Keeps the in-memory
+// mirror in sync when Supabase is the source of truth.
+async function persistOrderItems(order, items, total) {
+  order.items = items;
+  order.total = total;
+  if (USE_DB) {
+    const { error } = await supabase.from('orders').update({ items, total }).eq('id', order.id);
+    if (error) throw new Error(error.message);
+    const mem = db.orders.find(o => o.id === order.id);
+    if (mem) { mem.items = items; mem.total = total; }
+  } else {
+    const mem = db.orders.find(o => o.id === order.id);
+    if (mem) { mem.items = items; mem.total = total; }
+  }
 }
 
 // Build the unpaid-bill record for a session (or null when there is nothing
@@ -699,18 +787,24 @@ app.get('/api/orders', authMiddleware, async (req, res) => {
   }
 });
 
-// Get single order
+// Get single order (used by the admin View Order screen)
 app.get('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
-  if (USE_DB) {
-    const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    const meta = orderMeta.get(order.id);
-    return res.json(meta ? { ...order, ...meta } : order);
-  }
-  const order = db.orders.find(o => o.id === req.params.id);
+  const order = await loadOrderRaw(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  // Give every line a stable item_id (assigning + persisting for legacy orders).
+  const idsChanged = ensureItemIds(order);
+  if (idsChanged) {
+    try {
+      if (USE_DB) await supabase.from('orders').update({ items: order.items }).eq('id', order.id);
+      const mem = db.orders.find(o => o.id === order.id);
+      if (mem) mem.items = order.items;
+    } catch (e) { /* best-effort */ }
+  }
+
   const meta = orderMeta.get(order.id);
-  res.json(meta ? { ...order, ...meta } : order);
+  const bill_locked = await orderHasBill(order);
+  res.json({ ...(meta ? { ...order, ...meta } : order), bill_locked });
 }));
 
 // Create order (customer-facing)
@@ -745,11 +839,13 @@ app.post('/api/orders', asyncWrap(async (req, res) => {
     id: orderId,
     table: Number(table),
     session_id: session.id,
-    items: items.map(item => ({
+    items: items.map((item, idx) => ({
+      item_id: 'I' + (idx + 1),
       name: item.name,
       price: item.price,
       qty: item.qty,
-      options: item.options || []
+      options: item.options || [],
+      status: 'ACTIVE'
     })),
     total: items.reduce((sum, item) => sum + (item.price * item.qty), 0),
     order_status: 'PENDING',
@@ -796,6 +892,150 @@ app.patch('/api/orders/:id', authMiddleware, asyncWrap(async (req, res) => {
   const { action } = req.body;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  // ---- Per-item editing: cancel / replace ONE line of an order ----
+  // Serialized per order, server-validated, and blocked once a bill or payment exists.
+  if (action === 'cancel_item' || action === 'replace_item') {
+    return await withOrderLock(req.params.id, async () => {
+      const itemId = req.body.item_id;
+      const actionId = req.body.action_id || null;
+      if (!itemId) return res.status(400).json({ error: 'item_id is required.' });
+
+      const order = await loadOrderRaw(req.params.id);
+      if (!order) return res.status(404).json({ error: 'Order not found' });
+      if (order.order_status === 'CANCELLED') return res.status(400).json({ error: 'This order is cancelled and cannot be modified.' });
+      if (order.payment_status === 'PAID') return res.status(400).json({ error: 'This order is already paid. Item changes are not allowed.' });
+      if (await orderHasBill(order)) return res.status(409).json({ error: 'A bill has already been generated for this session. Item changes are blocked - settle or void the bill first.' });
+
+      ensureItemIds(order);
+      const items = Array.isArray(order.items) ? order.items.slice() : [];
+      const idx = items.findIndex(it => it && it.item_id === itemId);
+      if (idx === -1) return res.status(404).json({ error: 'Item not found in this order.' });
+      const item = items[idx];
+      const meta = orderMeta.get(order.id);
+
+      if (action === 'cancel_item') {
+        const lineQty = Number(item.qty) || 0;
+        // The admin must be explicit about how many units are cancelled. Default is the
+        // whole line, but a quantity is accepted so a qty-3 line can be partly cancelled.
+        const cancelQty = (req.body.qty === undefined || req.body.qty === null) ? lineQty : Math.floor(Number(req.body.qty));
+        if (!Number.isInteger(cancelQty) || cancelQty < 1 || cancelQty > lineQty) {
+          return res.status(400).json({ error: 'Cancel quantity must be a whole number between 1 and ' + lineQty + '.' });
+        }
+        const priorCancels = Array.isArray(item.cancellations) ? item.cancellations : [];
+        // Idempotent: a repeated request (double-click / retry) has no further effect.
+        if (item.status === 'CANCELLED' || (actionId && priorCancels.some(c => c && c.action_id === actionId))) {
+          return res.json({ success: true, already_cancelled: true, order: meta ? { ...order, ...meta } : order });
+        }
+        const nowIso = new Date().toISOString();
+        const unitPrice = Number(item.price) || 0;
+        const auditEntry = { action_id: actionId, qty: cancelQty, unit_price: unitPrice, amount: unitPrice * cancelQty, at: nowIso, by: 'ADMIN' };
+        if (cancelQty < lineQty) {
+          // Partial cancellation - keep the line, reduce its quantity, remember what was removed.
+          items[idx] = { ...item, qty: lineQty - cancelQty, cancellations: priorCancels.concat([auditEntry]) };
+        } else {
+          items[idx] = { ...item, status: 'CANCELLED', cancelled_at: nowIso, cancelled_by: 'ADMIN', cancellations: priorCancels.concat([auditEntry]) };
+        }
+        const activeItems = items.filter(it => it && it.status !== 'CANCELLED');
+        let orderCancelled = false;
+
+        if (activeItems.length === 0) {
+          // Every line is gone - reuse the existing order-cancellation workflow.
+          orderCancelled = true;
+          order.order_status = 'CANCELLED';
+          order.payment_status = 'NOT_APPLICABLE';
+          order.cancelled_at = nowIso;
+          order.items = items;
+          order.total = 0;
+          if (USE_DB) {
+            const r = await supabase.from('orders').update({
+              items, total: 0, order_status: 'CANCELLED', payment_status: 'NOT_APPLICABLE', cancelled_at: nowIso
+            }).eq('id', order.id);
+            if (r.error) return res.status(500).json({ error: r.error.message });
+          }
+          const mem = db.orders.find(o => o.id === order.id);
+          if (mem) Object.assign(mem, { items, total: 0, order_status: 'CANCELLED', payment_status: 'NOT_APPLICABLE', cancelled_at: nowIso });
+        } else {
+          await persistOrderItems(order, items, computeActiveOrderTotal(items));
+        }
+
+        await recalcSessionTotal(order.session_id);
+
+        // A fully-cancelled order must not keep the table occupied.
+        if (orderCancelled && order.session_id) {
+          let remaining = [];
+          if (USE_DB) {
+            const { data } = await supabase.from('orders').select('id, order_status').eq('session_id', order.session_id);
+            remaining = (data || []).filter(o => o.order_status !== 'CANCELLED');
+            if (remaining.length === 0) {
+              await supabase.from('table_sessions').update({ status: 'SETTLED', settled_at: new Date().toISOString(), total_amount: 0 }).eq('id', order.session_id);
+            }
+          } else {
+            remaining = db.orders.filter(o => o.session_id === order.session_id && o.order_status !== 'CANCELLED');
+            if (remaining.length === 0) {
+              const sess = db.table_sessions.find(s => s.id === order.session_id);
+              if (sess && sess.status === 'ACTIVE') { sess.status = 'SETTLED'; sess.settled_at = new Date().toISOString(); sess.total_amount = 0; }
+            }
+          }
+        }
+
+        const out = meta ? { ...order, ...meta } : order;
+        console.log(`[ITEM CANCELLED] ${order.id} - ${item.name} x${cancelQty}${cancelQty < lineQty ? ' (partial of ' + lineQty + ')' : ''} - order total now ${order.total}${orderCancelled ? ' (whole order cancelled - no items left)' : ''}`);
+        broadcastSSE('order_items_updated', { order_id: order.id, table: order.table, action: 'cancel_item', item_id: itemId, order: out });
+        return res.json({ success: true, order: out, order_cancelled: orderCancelled, cancel_qty: cancelQty });
+      }
+
+      // ---- replace_item ----
+      const rep = req.body.replacement || {};
+      const rName = typeof rep.name === 'string' ? rep.name.trim() : '';
+      const rPrice = Number(rep.price);
+      const rQty = (rep.qty === undefined || rep.qty === null) ? (Number(item.qty) || 1) : Number(rep.qty);
+      const rOptions = Array.isArray(rep.options) ? rep.options.map(String) : [];
+      if (!rName) return res.status(400).json({ error: 'Replacement item name is required.' });
+      if (!Number.isFinite(rPrice) || rPrice < 0) return res.status(400).json({ error: 'Replacement price is invalid.' });
+      if (!Number.isInteger(rQty) || rQty < 1 || rQty > 99) return res.status(400).json({ error: 'Replacement quantity must be between 1 and 99.' });
+      if (item.status === 'CANCELLED') return res.status(400).json({ error: 'This item is cancelled and cannot be replaced.' });
+
+      // Idempotency: a replayed request carrying the same action_id is a no-op.
+      const replacements = Array.isArray(item.replacements) ? item.replacements.slice() : [];
+      if (actionId && replacements.some(r => r && r.action_id === actionId)) {
+        return res.json({ success: true, already_applied: true, order: meta ? { ...order, ...meta } : order });
+      }
+
+      const origPrice = Number(item.price) || 0;
+      const origQty = Number(item.qty) || 0;
+      const originalSnapshot = item.replaced_from || { name: item.name, price: origPrice, qty: origQty, options: item.options || [] };
+      const priceDiff = (rPrice * rQty) - (origPrice * origQty);
+      const nowIso = new Date().toISOString();
+      const record = {
+        action_id: actionId,
+        from: { name: item.name, price: origPrice, qty: origQty, options: item.options || [] },
+        to: { name: rName, price: rPrice, qty: rQty, options: rOptions },
+        price_difference: priceDiff,
+        at: nowIso,
+        by: 'ADMIN'
+      };
+
+      items[idx] = {
+        ...item,
+        name: rName,
+        price: rPrice,
+        qty: rQty,
+        options: rOptions,
+        status: 'ACTIVE',
+        replaced_from: originalSnapshot,
+        replacements: replacements.concat([record])
+      };
+      const newTotal = computeActiveOrderTotal(items);
+      await persistOrderItems(order, items, newTotal);
+      await recalcSessionTotal(order.session_id);
+
+      const out = meta ? { ...order, ...meta } : order;
+      console.log(`[ITEM REPLACED] ${order.id} - ${record.from.name} x${record.from.qty} -> ${rName} x${rQty} (diff ${priceDiff}) - order total now ${newTotal}`);
+      broadcastSSE('order_items_updated', { order_id: order.id, table: order.table, action: 'replace_item', item_id: itemId, order: out });
+      return res.json({ success: true, order: out, price_difference: priceDiff });
+    });
+  }
 
   if (USE_DB) {
     const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
